@@ -1,42 +1,65 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { DiffLine, Lane } from "@/lib/dashboard-data";
-import { LOG_META, STATUS_META } from "@/lib/dashboard-data";
+import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
+
+export interface LaneView {
+  id: string;
+  sessionId: string;
+  tag: string;
+  name: string;
+  cwd: string;
+  status: LaneStatus;
+  isAlive: boolean;
+  output: string;
+  outputLoading: boolean;
+  diffOpen: boolean;
+  diff: string;
+  diffLoading: boolean;
+  hasNotification: boolean;
+}
 
 interface LaneCardProps {
-  lane: Lane;
+  lane: LaneView;
   isFocused: boolean;
   onToggleDiff: (id: string) => void;
   onToggleFocus: (id: string) => void;
   onKill: (id: string) => void;
-  onRetry: (id: string) => void;
-  onYes: (id: string) => void;
-  onNo: (id: string) => void;
-  onDraftChange: (id: string, value: string) => void;
-  onSendDraft: (id: string) => void;
 }
 
-function diffLineStyle(line: DiffLine): CSSProperties {
-  const isAdd = line.type === "add";
-  const isDel = line.type === "del";
-  const isFile = line.type === "file";
-  const color = isAdd ? "#4ade80" : isDel ? "#f87171" : isFile ? "#9aa0a8" : "#8a8f98";
-  const bg = isAdd ? "rgba(74,222,128,0.08)" : isDel ? "rgba(248,113,113,0.08)" : "transparent";
+function diffLineStyle(line: string): CSSProperties {
+  const isMeta = line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("@@");
+  const isAdd = !isMeta && line.startsWith("+");
+  const isDel = !isMeta && line.startsWith("-");
   return {
-    color,
-    background: bg,
+    color: isAdd ? "#4ade80" : isDel ? "#f87171" : isMeta ? "#9aa0a8" : "#8a8f98",
+    background: isAdd
+      ? "rgba(74,222,128,0.08)"
+      : isDel
+        ? "rgba(248,113,113,0.08)"
+        : "transparent",
     padding: "1.5px 14px",
     whiteSpace: "pre",
-    fontWeight: isFile ? 600 : 400,
+    fontWeight: isMeta ? 600 : 400,
   };
 }
 
-function diffLinePrefix(line: DiffLine): string {
-  if (line.type === "add") return "+ ";
-  if (line.type === "del") return "- ";
-  if (line.type === "file") return "";
-  return "  ";
+// ログ本文のうち、エラー/警告らしい行だけ色を付ける。
+function outputLineStyle(line: string): CSSProperties {
+  const lower = line.toLowerCase();
+  const isError = /(^|\s)(error|failed|exception)\b/.test(lower);
+  const isWarn = /(^|\s)(warn|warning)\b/.test(lower);
+  return {
+    color: isError ? "#fca5a5" : isWarn ? "#fde68a" : "#c9cdd3",
+    background: isError
+      ? "rgba(248,113,113,0.08)"
+      : isWarn
+        ? "rgba(251,191,36,0.08)"
+        : "transparent",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    padding: "0 2px",
+  };
 }
 
 export default function LaneCard({
@@ -45,17 +68,12 @@ export default function LaneCard({
   onToggleDiff,
   onToggleFocus,
   onKill,
-  onRetry,
-  onYes,
-  onNo,
-  onDraftChange,
-  onSendDraft,
 }: LaneCardProps) {
   const meta = STATUS_META[lane.status];
   const isWaiting = lane.status === "waiting";
-  const isError = lane.status === "error";
   const isKilled = lane.status === "killed";
-  const hasDiff = lane.diffLines.length > 0;
+  const outputLines = lane.output ? lane.output.split("\n") : [];
+  const diffLines = lane.diff ? lane.diff.split("\n") : [];
 
   const cardStyle: CSSProperties = {
     width: isFocused ? 980 : 720,
@@ -67,20 +85,20 @@ export default function LaneCard({
     borderRadius: 10,
     border: `1px solid ${lane.hasNotification ? meta.border : "#23262b"}`,
     boxShadow: lane.hasNotification ? `0 0 0 1px ${meta.border}` : "none",
-    opacity: isKilled ? 0.55 : 1,
+    opacity: isKilled ? 0.62 : 1,
     overflow: "hidden",
     transition: "box-shadow .2s ease, opacity .2s ease",
   };
 
   return (
     <div style={cardStyle}>
-      <div className="flex items-center justify-between gap-2 border-b border-[#1f2226] px-3.5 py-2.5 shrink-0">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[#1f2226] px-3.5 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 font-mono text-xs font-bold text-[#f2874a]">{lane.tag}</span>
           <span className="truncate text-[13px] font-semibold text-[#e6e8eb]">{lane.name}</span>
           {lane.hasNotification && (
             <span
-              className="inline-block h-1.5 w-1.5 rounded-full"
+              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
               style={{ background: meta.dot, animation: "dc-pulse 1.6s ease-in-out infinite" }}
             />
           )}
@@ -96,7 +114,7 @@ export default function LaneCard({
             type="button"
             title="Git Diff"
             onClick={() => onToggleDiff(lane.id)}
-            className="flex h-6.5 w-6.5 items-center justify-center rounded-md border border-[#23262b] cursor-pointer"
+            className="flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-md border border-[#23262b]"
             style={{
               background: lane.diffOpen ? "rgba(242,135,74,0.12)" : "transparent",
               color: lane.diffOpen ? "#f2874a" : "#8a8f98",
@@ -113,7 +131,7 @@ export default function LaneCard({
             type="button"
             title={isFocused ? "縮小" : "拡大"}
             onClick={() => onToggleFocus(lane.id)}
-            className="flex h-6.5 w-6.5 items-center justify-center rounded-md border border-[#23262b] text-[#8a8f98] cursor-pointer"
+            className="flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-md border border-[#23262b] text-[#8a8f98]"
           >
             {isFocused ? (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -133,10 +151,10 @@ export default function LaneCard({
           </button>
           <button
             type="button"
-            title="緊急停止"
-            disabled={isKilled}
+            title="停止 (claude stop)"
+            disabled={!lane.isAlive}
             onClick={() => onKill(lane.id)}
-            className="flex h-6.5 w-6.5 items-center justify-center rounded-md border border-[#3a1f1f] text-[#f87171] cursor-pointer disabled:cursor-not-allowed disabled:opacity-35"
+            className="flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-md border border-[#3a1f1f] text-[#f87171] disabled:cursor-not-allowed disabled:opacity-35"
             style={{ background: "rgba(248,113,113,0.08)" }}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -146,119 +164,60 @@ export default function LaneCard({
         </div>
       </div>
 
+      <div className="shrink-0 truncate border-b border-[#1f2226] bg-[#101215] px-3.5 py-1.5 font-mono text-[10.5px] text-[#5c6067]">
+        {lane.cwd}
+      </div>
+
       {lane.diffOpen && (
-        <div className="dc-scroll shrink-0 border-b border-[#1f2226] bg-[#0d0f12] py-2 font-mono text-[11px]" style={{ maxHeight: 170, overflow: "auto" }}>
-          {hasDiff ? (
-            lane.diffLines.map((line, i) => (
+        <div
+          className="dc-scroll shrink-0 border-b border-[#1f2226] bg-[#0d0f12] py-2 font-mono text-[11px]"
+          style={{ maxHeight: 200, overflow: "auto" }}
+        >
+          {lane.diffLoading ? (
+            <div className="px-3.5 py-1.5 text-[#5c6067]">差分を取得中…</div>
+          ) : diffLines.length > 0 ? (
+            diffLines.map((line, i) => (
               <div key={i} style={diffLineStyle(line)}>
-                {diffLinePrefix(line)}
-                {line.code}
+                {line || " "}
               </div>
             ))
           ) : (
-            <div className="px-3.5 py-1.5 text-[#5c6067]">変更ファイルはまだありません</div>
+            <div className="px-3.5 py-1.5 text-[#5c6067]">未コミットの変更はありません</div>
           )}
         </div>
       )}
 
-      <div className="dc-scroll flex flex-1 flex-col p-3.5" style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 14.5 : 13.5 }}>
-        {lane.logs.map((entry, i) => {
-          const m = LOG_META[entry.kind];
-          const isSystem = entry.kind === "system";
-          const isErr = entry.kind === "error";
-          const isWarn = entry.kind === "warning";
-          const isInstr = entry.kind === "instruction";
-          const bg = isErr
-            ? "rgba(248,113,113,0.1)"
-            : isWarn
-              ? "rgba(251,191,36,0.1)"
-              : isInstr
-                ? "rgba(242,135,74,0.1)"
-                : "rgba(255,255,255,0.035)";
-          const borderColor = isErr ? "#f87171" : isWarn ? "#fbbf24" : isInstr ? "#f2874a" : "transparent";
-          return (
-            <div
-              key={i}
-              className="mb-2.5 flex flex-col gap-0.5"
-              style={{ alignSelf: m.align === "right" ? "flex-end" : m.align === "center" ? "center" : "flex-start", maxWidth: isSystem ? "100%" : "88%" }}
-            >
-              <div className="font-mono text-[10px] tracking-wide" style={{ color: m.color, textAlign: isSystem ? "center" : m.align }}>
-                {m.label} {entry.time}
-              </div>
-              <div
-                className="leading-relaxed"
-                style={{
-                  background: bg,
-                  borderLeft: borderColor === "transparent" ? "none" : `3px solid ${borderColor}`,
-                  padding: isSystem ? "1px 0" : "8px 11px",
-                  borderRadius: isSystem ? 0 : 8,
-                  color: isErr ? "#fca5a5" : isWarn ? "#fde68a" : "#dfe2e6",
-                  wordBreak: "break-word",
-                }}
-              >
-                {entry.text}
-              </div>
+      <div
+        className="dc-scroll flex-1 p-3.5 font-mono"
+        style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 12.5 : 12 }}
+      >
+        {lane.outputLoading && outputLines.length === 0 ? (
+          <div className="text-[#5c6067]">ログを取得中…</div>
+        ) : outputLines.length > 0 ? (
+          outputLines.map((line, i) => (
+            <div key={i} style={outputLineStyle(line)}>
+              {line || " "}
             </div>
-          );
-        })}
-        {isError && (
-          <button
-            type="button"
-            onClick={() => onRetry(lane.id)}
-            className="mt-0.5 self-start rounded-md border border-[#4f1f1f] px-3 py-1.5 text-xs font-semibold text-[#f87171] cursor-pointer"
-            style={{ background: "rgba(248,113,113,0.12)" }}
-          >
-            再試行する
-          </button>
+          ))
+        ) : (
+          <div className="text-[#5c6067]">出力がありません</div>
         )}
       </div>
 
       {isWaiting && (
-        <div className="flex shrink-0 flex-col gap-2 border-t px-3.5 py-3" style={{ borderColor: "#2a2410", background: "#171307" }}>
-          <div className="text-xs leading-relaxed text-[#fde68a]">{lane.question}</div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onYes(lane.id)}
-              className="flex-1 rounded-md border border-[#1f4f39] py-1.5 text-xs font-semibold text-[#4ade80] cursor-pointer"
-              style={{ background: "rgba(74,222,128,0.14)" }}
-            >
-              はい
-            </button>
-            <button
-              type="button"
-              onClick={() => onNo(lane.id)}
-              className="flex-1 rounded-md border border-[#4f1f1f] py-1.5 text-xs font-semibold text-[#f87171] cursor-pointer"
-              style={{ background: "rgba(248,113,113,0.1)" }}
-            >
-              いいえ
-            </button>
-          </div>
-          <div className="flex gap-1.5">
-            <input
-              type="text"
-              value={lane.draftReply}
-              onChange={(e) => onDraftChange(lane.id, e.target.value)}
-              placeholder="自由入力で返信..."
-              className="flex-1 rounded-md border px-2.5 py-1.5 text-xs text-[#e6e8eb] outline-none"
-              style={{ background: "#0d0f12", borderColor: "#2a2410" }}
-            />
-            <button
-              type="button"
-              disabled={!lane.draftReply.trim()}
-              onClick={() => onSendDraft(lane.id)}
-              className="rounded-md border-none px-3.5 text-xs font-bold text-[#1a0f08] cursor-pointer disabled:cursor-not-allowed disabled:opacity-35"
-              style={{ background: "#f2874a" }}
-            >
-              送信
-            </button>
-          </div>
+        <div
+          className="shrink-0 border-t px-3.5 py-2.5 text-[11.5px] leading-relaxed text-[#fde68a]"
+          style={{ borderColor: "#2a2410", background: "#171307" }}
+        >
+          このセッションは入力待ちです。返信の送信はまだ未実装のため、
+          <span className="font-mono"> claude attach {lane.id} </span>
+          で開いて応答してください。
         </div>
       )}
 
       {isKilled && (
         <div className="shrink-0 border-t border-dashed border-[#2a2d33] px-3.5 py-2 text-center text-[11px] text-[#6b7280]">
-          このレーンは停止されました
+          このセッションは終了しています（claude attach {lane.id} で再開できます）
         </div>
       )}
     </div>

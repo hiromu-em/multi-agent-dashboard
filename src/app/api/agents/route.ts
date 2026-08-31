@@ -1,24 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { listAgents } from "@/lib/agents-cli";
 
-// サブエージェントの一覧取得・新規起動・指示送信を担当するエンドポイント（スタブ）。
+// `claude agents --json` をラップして、稼働中のサブエージェントをレーン一覧として返す。
 //
-// 実装予定:
-// - GET  : 現在アクティブなサブエージェント（レーン）の一覧をJSONで返す
-// - POST : 窓口セッションからの指示を受け取り、
-//          `#A ...` のようなプレフィックスでルーティング先を判定する。
-//          - 既存セッション宛なら、そのプロセスのstdinに書き込む
-//          - 新規プレフィックス宛なら、`git worktree add` で作業ディレクトリを切り、
-//            `child_process.spawn` で `claude` CLIを起動する
-//          複数行にまたがる一括指示（#A .../#B .../#C ...）にも対応する。
+// TODO(方式B): 窓口セッションからの指示を受け取るPOSTを追加する。
+//   `#A ...` のプレフィックスでルーティング先を判定し、
+//   新規なら `claude --bg -w <name>`、既存なら `--resume <sessionId>` で継続する。
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json({ agents: [] });
-}
-
-export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => null);
-  return NextResponse.json(
-    { error: "not_implemented", received: body },
-    { status: 501 },
-  );
+  try {
+    const agents = await listAgents();
+    return NextResponse.json({ agents });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: "claude_cli_failed", message }, { status: 500 });
+  }
 }
