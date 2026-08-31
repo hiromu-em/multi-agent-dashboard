@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Claude Code Multi-Agent Dashboard
 
-## Getting Started
+窓口セッション（Claude Code CLI）から複数のサブエージェントセッションへ出した指示と、その進捗をレーンごとに監視するローカルNext.jsダッシュボード。
 
-First, run the development server:
+### 決まっている設計方針
+
+- **指示の入力口はCLIのみ。** ダッシュボード側に指示入力欄は置かない。窓口セッションで打った `#A ...` のような行をフックまたは専用コマンド経由でバックエンドAPIに渡し、対応するサブエージェントセッション（`git worktree` + `claude` CLIサブプロセス）にルーティングする。
+- **窓口セッション自身はボードにならない。** ボードとして表示されるのは、バックエンドが `child_process` で実際にスポーンしたサブエージェントセッションのみ。
+- **複数指示の一括送信に対応する。** 窓口セッションでの入力は、`#`で始まる行を新しい指示の開始とみなし、次の`#`行（または入力の終端）までをその宛先への指示本文として扱う。1回の送信で複数エージェントへ同時に指示を出せるようにする（並列ディスパッチ、逐次待ちしない）。
+- **ダッシュボード側から直接できる操作**（CLIを介さずレーン上で完結させる）:
+  - 対話待ち（y/n など）への返信フォーム
+  - 緊急停止（Kill）
+  - エラー時の再試行
+  - Git Diffの開閉表示
+  - レーンのフォーカス拡大 / 一覧表示切り替え（3 / 4 / 5 / 8 レーン、横スクロール）
+- **通知**: 完了・対話待ちのレーンはバッジ（ドット）とカードの縁取りでハイライトする。
+
+### 技術スタック
+
+- TypeScript / Node.js
+- Next.js (App Router) + Tailwind CSS — UIとAPI Routesを1プロジェクトに統合
+- SSE (Server-Sent Events) — `app/api/**/route.ts` の `ReadableStream` でサブエージェントの標準出力をリアルタイム配信
+- `child_process` + `git worktree` — サブエージェントごとに作業ディレクトリを完全分離
+
+### ディレクトリ
+
+```
+src/app/                 UIページ（ダッシュボード本体）
+src/app/api/agents/      サブエージェントの起動・一覧・指示送信API（スタブ）
+src/app/api/agents/[id]/stream/  各サブエージェントの標準出力をSSEで配信するAPI（スタブ）
+.worktrees/              サブエージェント用 git worktree の作成先（gitignore対象、実行時に生成）
+.logs/                   ログの永続化先（gitignore対象、実行時に生成）
+```
+
+### 未決定・要検討
+
+- 窓口セッションでの `#` プレフィックス入力をどう横取りするか（`UserPromptSubmit` フック vs 専用スラッシュコマンド）
+- 存在しない宛先プレフィックスを指示した場合に新規セッションを自動生成するか、事前にセッションを作る操作を必須にするか
+- 最大同時アクティブ数の制御（レートリミット対策のキュー構造）
+
+### 開発
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

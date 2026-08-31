@@ -36,6 +36,12 @@ yarn-error.log*
 # vercel
 .vercel
 
+# サブエージェント用の git worktree（実行時に動的に作成・削除される）
+/.worktrees/
+
+# ログの永続化先
+/.logs/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
