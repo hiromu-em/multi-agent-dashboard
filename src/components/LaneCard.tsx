@@ -1,7 +1,10 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
+
+// 「最下部にいる」と判定する余白(px)。これより下端に近ければ追従を続ける。
+const TAIL_THRESHOLD = 48;
 
 export interface LaneView {
   id: string;
@@ -74,6 +77,30 @@ export default function LaneCard({
   const isKilled = lane.status === "killed";
   const outputLines = lane.output ? lane.output.split("\n") : [];
   const diffLines = lane.diff ? lane.diff.split("\n") : [];
+
+  const logRef = useRef<HTMLDivElement>(null);
+  // 最新に追従するか。自分で上にスクロールしている間は止める。
+  const [followTail, setFollowTail] = useState(true);
+
+  useEffect(() => {
+    if (!followTail) return;
+    const el = logRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [lane.output, followTail, isFocused, lane.diffOpen]);
+
+  function handleLogScroll() {
+    const el = logRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < TAIL_THRESHOLD;
+    setFollowTail(atBottom);
+  }
+
+  function jumpToTail() {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    setFollowTail(true);
+  }
 
   const cardStyle: CSSProperties = {
     width: isFocused ? 980 : 720,
@@ -187,20 +214,39 @@ export default function LaneCard({
         </div>
       )}
 
-      <div
-        className="dc-scroll flex-1 p-3.5 font-mono"
-        style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 12.5 : 12 }}
-      >
-        {lane.outputLoading && outputLines.length === 0 ? (
-          <div className="text-[#5c6067]">ログを取得中…</div>
-        ) : outputLines.length > 0 ? (
-          outputLines.map((line, i) => (
-            <div key={i} style={outputLineStyle(line)}>
-              {line || " "}
-            </div>
-          ))
-        ) : (
-          <div className="text-[#5c6067]">出力がありません</div>
+      <div className="relative flex flex-1" style={{ minHeight: 0 }}>
+        <div
+          ref={logRef}
+          onScroll={handleLogScroll}
+          className="dc-scroll flex-1 p-3.5 font-mono"
+          style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 12.5 : 12 }}
+        >
+          {lane.outputLoading && outputLines.length === 0 ? (
+            <div className="text-[#5c6067]">ログを取得中…</div>
+          ) : outputLines.length > 0 ? (
+            outputLines.map((line, i) => (
+              <div key={i} style={outputLineStyle(line)}>
+                {line || " "}
+              </div>
+            ))
+          ) : (
+            <div className="text-[#5c6067]">出力がありません</div>
+          )}
+        </div>
+
+        {!followTail && (
+          <button
+            type="button"
+            onClick={jumpToTail}
+            className="absolute bottom-3 right-4 flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold shadow-lg"
+            style={{ borderColor: "#3a3d44", background: "#1f2228", color: "#e6e8eb" }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <polyline points="19 12 12 19 5 12" />
+            </svg>
+            最新へ
+          </button>
         )}
       </div>
 
