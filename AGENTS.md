@@ -18,7 +18,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - ダッシュボードUIは実装済み。モックデータではなく、実際に動いているバックグラウンドセッションを表示する
 - `claude agents --json` / `claude logs` / `claude stop` / `git diff` をAPI化して接続済み（後述の「方式A」）
-- 未実装: 対話待ちレーンへの返信送信、窓口CLIからの `#` プレフィックス指示の受け口、SSEストリーミング
+- 未実装: 窓口CLIからの `#` プレフィックス指示の受け口（対話待ちレーンへの返信もこれに含まれる）、ログの構造化表示
 
 ## 主要ファイル
 
