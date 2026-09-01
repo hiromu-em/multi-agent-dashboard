@@ -1,24 +1,33 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { readAgentLogs } from "@/lib/agents-cli";
+import { readTranscript } from "@/lib/transcript";
 
-// `claude logs <id>` の出力（ANSI除去済み）を返す。
-// 方式Aではダッシュボード側がこれをポーリングして各レーンに表示する。
+// セッションの会話（~/.claude/projects/**/<sessionId>.jsonl）を読んで返す。
+// `claude logs` の端末描画ではなく構造化された会話なので、CLIも起動しない。
+//
+// sessionId はクライアントが持っているので `?session=` で受け取る。
+// 無い場合は短いID（sessionIdの先頭8桁）の前方一致で探す。
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const SESSION_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  // CLIに渡す前に、想定しているID形式（英数字）以外を弾く。
   if (!/^[A-Za-z0-9_-]+$/.test(id)) {
     return NextResponse.json({ error: "invalid_id" }, { status: 400 });
   }
 
+  const session = req.nextUrl.searchParams.get("session");
+  if (session && !SESSION_ID_PATTERN.test(session)) {
+    return NextResponse.json({ error: "invalid_session" }, { status: 400 });
+  }
+
   try {
-    const output = await readAgentLogs(id);
-    return NextResponse.json({ id, output });
+    const entries = await readTranscript(id, session ?? undefined);
+    return NextResponse.json({ id, entries });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: "claude_cli_failed", message }, { status: 500 });
+    return NextResponse.json({ error: "transcript_failed", message }, { status: 500 });
   }
 }

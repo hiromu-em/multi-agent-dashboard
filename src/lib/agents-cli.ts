@@ -79,35 +79,8 @@ export async function listAgents(): Promise<AgentLane[]> {
     }));
 }
 
-// ANSIエスケープシーケンス（色・カーソル移動など）を除去する。
-// ソースに生の制御文字を置かないよう、文字列から RegExp を組み立てる。
-const ANSI_PATTERN = new RegExp(
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d/#&.:=?%@~_]*)*)?\\u0007" +
-    "|(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~])",
-  "g",
-);
-
-// 残った制御文字（ベル・バックスペース等）。改行とタブは残す。
-const CONTROL_PATTERN = new RegExp("[\\u0000-\\u0008\\u000B-\\u001F\\u007F]", "g");
-
-export function stripAnsi(input: string): string {
-  return input.replace(ANSI_PATTERN, "").replace(/\r/g, "\n").replace(CONTROL_PATTERN, "");
-}
-
-/** `claude logs <id>` の出力をANSI除去して返す。 */
-export async function readAgentLogs(id: string): Promise<string> {
-  const { stdout } = await run(CLAUDE_BIN, ["logs", id], {
-    maxBuffer: 8 * 1024 * 1024,
-  });
-
-  return stripAnsi(stdout)
-    .split("\n")
-    .map((line) => line.replace(/\s+$/, ""))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
+// ログは `claude logs` ではなくセッションの会話JSONLから読む（src/lib/transcript.ts）。
+// 端末描画を経由しないので、ANSI除去も \r の後始末も要らない。
 
 /** `claude stop <id>` でバックグラウンドセッションを停止する（会話は保持される）。 */
 export async function stopAgent(id: string): Promise<void> {

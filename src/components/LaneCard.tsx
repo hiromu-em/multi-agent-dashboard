@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
+import type { TranscriptEntry } from "@/lib/transcript";
 
 // 「最下部にいる」と判定する余白(px)。これより下端に近ければ追従を続ける。
 const TAIL_THRESHOLD = 48;
@@ -14,8 +15,8 @@ export interface LaneView {
   cwd: string;
   status: LaneStatus;
   isAlive: boolean;
-  output: string;
-  outputLoading: boolean;
+  entries: TranscriptEntry[];
+  entriesLoaded: boolean;
   diffOpen: boolean;
   diff: string;
   diffLoading: boolean;
@@ -47,22 +48,49 @@ function diffLineStyle(line: string): CSSProperties {
   };
 }
 
-// ログ本文のうち、エラー/警告らしい行だけ色を付ける。
-function outputLineStyle(line: string): CSSProperties {
-  const lower = line.toLowerCase();
-  const isError = /(^|\s)(error|failed|exception)\b/.test(lower);
-  const isWarn = /(^|\s)(warn|warning)\b/.test(lower);
-  return {
-    color: isError ? "#fca5a5" : isWarn ? "#fde68a" : "#c9cdd3",
-    background: isError
-      ? "rgba(248,113,113,0.08)"
-      : isWarn
-        ? "rgba(251,191,36,0.08)"
-        : "transparent",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    padding: "0 2px",
-  };
+// 会話1件の表示。窓口の指示・エージェントの発言・ツール実行・エラーを見分けられるようにする。
+function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+  if (entry.role === "tool") {
+    return (
+      <div className="flex items-baseline gap-2 py-0.5 text-[#6f7580]">
+        <span className="shrink-0 text-[#4b5058]">▸</span>
+        <span className="shrink-0 font-semibold text-[#7f8590]">{entry.tool}</span>
+        <span className="truncate">{entry.text}</span>
+      </div>
+    );
+  }
+
+  const isUser = entry.role === "user";
+  const isError = entry.role === "error";
+
+  return (
+    <div className={`flex flex-col py-1.5 ${isUser ? "items-end" : "items-start"}`}>
+      <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-[#5c6067]">
+        <span style={{ color: isUser ? "#f2874a" : isError ? "#f87171" : "#8a8f98" }}>
+          {isUser ? "窓口 →" : isError ? "ERROR" : "エージェント"}
+        </span>
+        {entry.time && <span>{entry.time}</span>}
+      </div>
+      <div
+        className="max-w-[92%] rounded-lg px-2.5 py-1.5"
+        style={{
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          color: isError ? "#fca5a5" : isUser ? "#f4d3bd" : "#c9cdd3",
+          background: isError
+            ? "rgba(248,113,113,0.08)"
+            : isUser
+              ? "rgba(242,135,74,0.10)"
+              : "rgba(255,255,255,0.03)",
+          border: `1px solid ${
+            isError ? "rgba(248,113,113,0.25)" : isUser ? "rgba(242,135,74,0.25)" : "transparent"
+          }`,
+        }}
+      >
+        {entry.text}
+      </div>
+    </div>
+  );
 }
 
 export default function LaneCard({
@@ -76,19 +104,21 @@ export default function LaneCard({
   const isWaiting = lane.status === "waiting";
   const isKilled = lane.status === "killed";
   const isError = lane.status === "error";
-  const outputLines = lane.output ? lane.output.split("\n") : [];
   const diffLines = lane.diff ? lane.diff.split("\n") : [];
 
   const logRef = useRef<HTMLDivElement>(null);
   // 最新に追従するか。自分で上にスクロールしている間は止める。
   const [followTail, setFollowTail] = useState(true);
 
+  // 毎回のポーリングで新しい配列が来るので、中身が増えたときだけ追従させる。
+  const lastKey = lane.entries.at(-1)?.key ?? "";
+
   useEffect(() => {
     if (!followTail) return;
     const el = logRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [lane.output, followTail, isFocused, lane.diffOpen]);
+  }, [lastKey, lane.entries.length, followTail, isFocused, lane.diffOpen]);
 
   function handleLogScroll() {
     const el = logRef.current;
@@ -222,16 +252,12 @@ export default function LaneCard({
           className="dc-scroll flex-1 p-3.5 font-mono"
           style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 12.5 : 12 }}
         >
-          {lane.outputLoading && outputLines.length === 0 ? (
-            <div className="text-[#5c6067]">ログを取得中…</div>
-          ) : outputLines.length > 0 ? (
-            outputLines.map((line, i) => (
-              <div key={i} style={outputLineStyle(line)}>
-                {line || " "}
-              </div>
-            ))
+          {lane.entries.length > 0 ? (
+            lane.entries.map((entry) => <TranscriptRow key={entry.key} entry={entry} />)
           ) : (
-            <div className="text-[#5c6067]">出力がありません</div>
+            <div className="text-[#5c6067]">
+              {lane.entriesLoaded ? "まだやり取りがありません" : "会話を読み込み中…"}
+            </div>
           )}
         </div>
 

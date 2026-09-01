@@ -5,7 +5,7 @@
 ### 決まっている設計方針
 
 - **指示の入力口はCLIのみ。** ダッシュボード側に指示入力欄は置かない。窓口セッションで打った `#A ...` のような行をフックまたは専用コマンド経由でバックエンドAPIに渡し、対応するサブエージェントセッション（`git worktree` + `claude` CLIサブプロセス）にルーティングする。
-- **窓口セッション自身はボードにならない。** ボードとして表示されるのは、バックエンドが `child_process` で実際にスポーンしたサブエージェントセッションのみ。
+- **窓口セッション自身はボードにならない。** ボードとして表示されるのは、`claude --bg` で起動されたバックグラウンドセッションのみ。
 - **複数指示の一括送信に対応する。** 窓口セッションでの入力は、`#`で始まる行を新しい指示の開始とみなし、次の`#`行（または入力の終端）までをその宛先への指示本文として扱う。1回の送信で複数エージェントへ同時に指示を出せるようにする（並列ディスパッチ、逐次待ちしない）。
 - **ダッシュボードは監視専用。返信フォームも置かない。** 対話待ちのレーンへの返信も「指示」なので、窓口CLIから出す。ダッシュボード上に文字を入力する場所は一切作らない。
 - **ダッシュボード側から直接できる操作**（指示ではなく、レーンの操作・表示に限る）:
@@ -19,8 +19,8 @@
 
 - TypeScript / Node.js
 - Next.js (App Router) + Tailwind CSS — UIとAPI Routesを1プロジェクトに統合
-- SSE (Server-Sent Events) — `app/api/**/route.ts` の `ReadableStream` でサブエージェントの標準出力をリアルタイム配信
-- `child_process` + `git worktree` — サブエージェントごとに作業ディレクトリを完全分離
+- `claude` CLI — セッションの起動・停止・一覧は自前で実装せずCLIに任せる（`git worktree` の管理もCLI側が持っている）
+- セッションの会話JSONL（`~/.claude/projects/**/<sessionId>.jsonl`）— ログはここから読む。端末出力を経由しないので、発言とツール実行を分けて表示できる
 
 ### ディレクトリ
 
@@ -28,12 +28,13 @@
 src/app/page.tsx                 ダッシュボード本体
 src/components/LaneCard.tsx      1レーン分のボード
 src/lib/agents-cli.ts            claude CLI と git diff のラッパー
+src/lib/transcript.ts            セッションの会話JSONLの読み取り
 src/lib/dashboard-data.ts        ステータスの配色・ラベル定義
 src/app/api/agents/              セッション一覧（GET）
-src/app/api/agents/[id]/logs/    ログ取得（GET）
+src/app/api/agents/[id]/logs/    会話取得（GET）
 src/app/api/agents/[id]/diff/    作業ディレクトリの git diff（GET）
 src/app/api/agents/[id]/stop/    セッション停止（POST）
-src/app/api/agents/[id]/stream/  SSE配信（方式B用スタブ、未実装）
+src/app/api/agents/[id]/stream/  SSE配信スタブ（未実装）
 .logs/                           ログの永続化先（gitignore対象、未実装）
 ```
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LaneCard, { type LaneView } from "@/components/LaneCard";
 import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
+import type { TranscriptEntry } from "@/lib/transcript";
 
 const LANE_COUNT_OPTIONS = [3, 4, 5, 8];
 const AGENTS_POLL_MS = 4000;
@@ -26,8 +27,8 @@ export default function DashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
 
-  const [outputs, setOutputs] = useState<Record<string, string>>({});
-  const [outputLoading, setOutputLoading] = useState<Record<string, boolean>>({});
+  const [entries, setEntries] = useState<Record<string, TranscriptEntry[]>>({});
+  const [entriesLoaded, setEntriesLoaded] = useState<Record<string, boolean>>({});
   const [diffOpen, setDiffOpen] = useState<Record<string, boolean>>({});
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [diffLoading, setDiffLoading] = useState<Record<string, boolean>>({});
@@ -48,8 +49,8 @@ export default function DashboardPage() {
       return Object.fromEntries(keys.filter((key) => alive.has(key)).map((key) => [key, prev[key]]));
     }
 
-    setOutputs(prune);
-    setOutputLoading(prune);
+    setEntries(prune);
+    setEntriesLoaded(prune);
     setDiffOpen(prune);
     setDiffs(prune);
     setDiffLoading(prune);
@@ -88,40 +89,46 @@ export default function DashboardPage() {
   const isFocusMode = !!focusedAgent;
   const displayAgents = isFocusMode ? [focusedAgent!] : visibleAgents;
 
-  // 表示中のレーンのログだけを取りに行く（CLI呼び出しを抑えるため）。
-  const displayIds = useMemo(() => displayAgents.map((a) => a.id).join(","), [displayAgents]);
+  // 表示中のレーンの会話だけを取りに行く。
+  // 会話ファイルの特定に sessionId が要るので、id と一緒に持ち回る。
+  const displayKeys = useMemo(
+    () => displayAgents.map((a) => `${a.id}:${a.sessionId}`).join(","),
+    [displayAgents],
+  );
 
   useEffect(() => {
-    if (!displayIds) return;
-    const ids = displayIds.split(",");
+    if (!displayKeys) return;
+    const targets = displayKeys.split(",").map((key) => key.split(":"));
     let cancelled = false;
 
-    const loadLogs = async () => {
+    const loadTranscripts = async () => {
       await Promise.all(
-        ids.map(async (id) => {
-          setOutputLoading((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
+        targets.map(async ([id, sessionId]) => {
           try {
-            const res = await fetch(`/api/agents/${id}/logs`, { cache: "no-store" });
+            const res = await fetch(
+              `/api/agents/${id}/logs?session=${encodeURIComponent(sessionId)}`,
+              { cache: "no-store" },
+            );
             const json = await res.json();
             if (!cancelled && res.ok) {
-              setOutputs((prev) => ({ ...prev, [id]: json.output ?? "" }));
+              setEntries((prev) => ({ ...prev, [id]: json.entries ?? [] }));
             }
           } catch {
             // ポーリングなので個別の失敗は黙って次回に任せる
           } finally {
-            if (!cancelled) setOutputLoading((prev) => ({ ...prev, [id]: false }));
+            if (!cancelled) setEntriesLoaded((prev) => ({ ...prev, [id]: true }));
           }
         }),
       );
     };
 
-    loadLogs();
-    const timer = setInterval(loadLogs, LOGS_POLL_MS);
+    loadTranscripts();
+    const timer = setInterval(loadTranscripts, LOGS_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [displayIds]);
+  }, [displayKeys]);
 
   // ステータスが変わったレーンに通知ドットを立てる。
   useEffect(() => {
@@ -192,8 +199,8 @@ export default function DashboardPage() {
     cwd: a.cwd,
     status: a.status,
     isAlive: a.isAlive,
-    output: outputs[a.id] ?? "",
-    outputLoading: outputLoading[a.id] ?? false,
+    entries: entries[a.id] ?? [],
+    entriesLoaded: entriesLoaded[a.id] ?? false,
     diffOpen: diffOpen[a.id] ?? false,
     diff: diffs[a.id] ?? "",
     diffLoading: diffLoading[a.id] ?? false,

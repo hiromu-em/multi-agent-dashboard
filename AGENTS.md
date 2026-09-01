@@ -17,22 +17,24 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 現在どこまで出来ているか
 
 - ダッシュボードUIは実装済み。モックデータではなく、実際に動いているバックグラウンドセッションを表示する
-- `claude agents --json` / `claude logs` / `claude stop` / `git diff` をAPI化して接続済み（後述の「方式A」）
-- 未実装: 窓口CLIからの `#` プレフィックス指示の受け口（対話待ちレーンへの返信もこれに含まれる）、ログの構造化表示
+- `claude agents --json` / `claude stop` / `git diff` をAPI化して接続済み。ログは `claude logs` ではなく会話JSONLから読む（後述）
+- ログはセッションの会話JSONLから読み、発言・ツール実行・エラーを分けて表示する
+- 未実装: 窓口CLIからの `#` プレフィックス指示の受け口（対話待ちレーンへの返信もこれに含まれる）
 
 ## 主要ファイル
 
 | パス | 役割 |
 |---|---|
 | `src/app/page.tsx` | ダッシュボード本体。ポーリング、レーン数切替、フォーカス表示、Kill確認 |
-| `src/components/LaneCard.tsx` | 1レーン分のボード。ログ表示（最新追従つき）、Diffパネル、各種ボタン |
-| `src/lib/agents-cli.ts` | `claude` CLIと `git diff` のラッパー。状態マッピングとANSI除去 |
+| `src/components/LaneCard.tsx` | 1レーン分のボード。会話表示（最新追従つき）、Diffパネル、各種ボタン |
+| `src/lib/agents-cli.ts` | `claude` CLIと `git diff` のラッパー。状態マッピング |
+| `src/lib/transcript.ts` | セッションの会話JSONLを読んで表示用に整形する |
 | `src/lib/dashboard-data.ts` | ステータスの配色・ラベル定義 |
 | `src/app/api/agents/route.ts` | セッション一覧（GET） |
-| `src/app/api/agents/[id]/logs/route.ts` | ログ取得（GET） |
+| `src/app/api/agents/[id]/logs/route.ts` | 会話取得（GET）。`?session=<uuid>` を取る |
 | `src/app/api/agents/[id]/diff/route.ts` | 作業ディレクトリの `git diff`（GET） |
 | `src/app/api/agents/[id]/stop/route.ts` | セッション停止（POST） |
-| `src/app/api/agents/[id]/stream/route.ts` | SSE配信のスタブ（方式B用、未実装） |
+| `src/app/api/agents/[id]/stream/route.ts` | SSE配信のスタブ（未実装。JSONLの更新通知に使う想定） |
 
 ## 設計上の決定（変更する前に必ず読むこと）
 
@@ -69,28 +71,43 @@ CLIが返す `state` は `working` `blocked` `done` `failed` `stopped` の5種�
 
 なお `claude agents --json` は既定では完了済みセッションを含まない。過去分も並べたい場合は `--all`、対象ディレクトリで絞りたい場合は `--cwd <path>` を付ける。
 
-### 方式Aと方式B
+### ログは会話JSONLから読む（`claude logs` は使わない）
 
-- **方式A（現在の実装）**: `claude agents --json` と `claude logs <id>` をポーリングする。実装が軽い。ただし `claude logs` が返すのはANSI付きの端末描画そのものなので、チャットの吹き出しではなくターミナル風の表示になる
-- **方式B（次の段階）**: バックエンドが `claude -p --session-id <uuid> --output-format stream-json --include-partial-messages` を spawn し、標準出力のJSON行をそのままSSEでダッシュボードに流す。`--input-format stream-json` を併用すると走っているプロセスのstdinへ追加メッセージを送れるので、対話待ちレーンへの返信フォームもこれで実現できる
+Claude Code はセッションごとの会話を JSONL で書き出している。
+
+```
+~/.claude/projects/<cwdを符号化したディレクトリ>/<sessionId>.jsonl
+```
+
+`src/lib/transcript.ts` がこれを追尾する。`claude logs` の出力はANSI付きの端末描画そのもので、進捗表示の上書き（`\r`）が縦に展開されてログが数百行に膨らむ上、発言とツール実行を区別できない。JSONLなら構造化された会話がそのまま取れて、CLIの起動も要らない。
+
+- ディレクトリ名の符号化規則は公開されていないので、**パスを組み立てず `<sessionId>.jsonl` を各ディレクトリから探す**。sessionId が無い場合は短いID（sessionIdの先頭8桁）の前方一致で探す
+- 会話が長くなるので末尾512KBだけ読む。途中から読むと1行目が欠けるので捨てる（マルチバイト文字の切断もここで落ちる）
+- 出すのは「窓口の指示」「エージェントの発言」「ツール実行」「失敗したツール結果」の4種類。思考（`thinking`）と成功したツール結果は出さない。`isSidechain` はサブエージェント内部のやり取りなので除外する
+
+**方式B（バックエンドが `claude -p --output-format stream-json` を spawn する案）は採用しない。** あれはバックエンドがセッションの所有者になる設計で、`claude --bg` で起動したセッションを外から監視する今の形と噛み合わない。構造化ログという目的はJSONL追尾で達成済み。
+
+### 窓口CLIから指示を飛ばす方法（未実装）
+
+`claude --bg --resume <sessionId> "指示"` で既存セッションを継続できる。ただし **対象が実行中（`working`）のときは継続にならずコピーが新しく生える**（`--bg` のヘルプに明記）。`claude agents --json` の `state` を見て、`working` の間は送らずキューに積む必要がある。これは並列数の制御ではなく、セッションの複製を防ぐために必須。
 
 ### 対話待ちの扱いについての注意
 
-`-p`（非対話）モードには、対話型TUIのような y/n プロンプトはそのままの形では現れない。権限確認は `--permission-mode` や `--allowedTools` で事前に決める。したがって「対話待ち」は「エージェントがターンを終えて質問文を返した状態」として扱い、返信は追加プロンプトの送信として実装するのが現実的。
+バックグラウンドセッションには、対話型TUIのような y/n プロンプトはそのままの形では現れない。権限確認は `--permission-mode` や `--allowedTools` で事前に決める。したがって「対話待ち」（`state: "blocked"`）は「エージェントがターンを終えて質問文を返した状態」であり、返信は割り込みではなく**追加プロンプトの送信**になる。送信手段は上の `claude --bg --resume` と同じで、返信専用の仕組みは要らない。
 
 ## この環境（Windows）特有の注意点
 
 - **jqが入っていない。** シェルスクリプトはjq非依存で書くこと。黙って空を返して壊れる
 - **`claude` は `claude.exe`** なので、`child_process` から呼ぶときに `shell: true` は不要
 - **`npm run dev` を止めても `next dev` の子プロセスが生き残る。** ポートを掴んだままになるので `taskkill /PID <pid> /T /F` でプロセスツリーごと落とす。なおダッシュボードのKillは `claude stop` に任せているのでこの問題を回避できている
-- **ポーリング間隔**: セッション一覧が4秒、ログが5秒。ログは表示中のレーンだけ取得している（CLI呼び出しを抑えるため）
+- **ポーリング間隔**: セッション一覧が4秒、会話が5秒。会話は表示中のレーンだけ取得している。会話はファイル読み取りなのでCLI起動を伴わない
 - git worktreeを使う場合、`node_modules` は共有されないので別途インストールが必要。またTurbopackはジャンクション越しの `node_modules` を受け付けない
 
 ## 次にやること
 
-1. 方式Bへの移行（SSEストリーミング、対話待ちへの返信送信）
-2. 窓口CLIからの `#` プレフィックス指示の受け口。`UserPromptSubmit` フックで `#` 始まりの入力だけを横取りしてAPIにPOSTし、そのプロンプトはブロックする（窓口のコンテキストを消費させない）
-3. 同時アクティブ数の制御（レートリミット対策のキュー）
+1. 窓口CLIの `#` プレフィックス指示の受け口。`UserPromptSubmit` フックで `#` 始まりの入力だけを横取りしてAPIにPOSTし、そのプロンプトはブロックする（窓口のコンテキストを消費させない）
+2. 受け取った指示の配送。`claude --bg --resume <sessionId>` を使う。宛先が `working` の間は送らずキューに積む（セッションの複製を防ぐため必須）。同時アクティブ数の制御もここに乗せる
+3. タグをsessionIdに紐づけて安定させる。今は配列インデックス由来なので、セッションが1つ消えると後続のタグが繰り上がる。宛先として使う前に直す必要がある
 4. ログの永続化（`.logs/`）と通知（完了・確認待ち時の音・ブラウザ通知）
 
 ## 開発コマンド
