@@ -75,6 +75,7 @@ export default function LaneCard({
   const meta = STATUS_META[lane.status];
   const isWaiting = lane.status === "waiting";
   const isKilled = lane.status === "killed";
+  const isError = lane.status === "error";
   const outputLines = lane.output ? lane.output.split("\n") : [];
   const diffLines = lane.diff ? lane.diff.split("\n") : [];
 
@@ -258,6 +259,17 @@ export default function LaneCard({
           このセッションは入力待ちです。返信の送信はまだ未実装のため、
           <span className="font-mono"> claude attach {lane.id} </span>
           で開いて応答してください。
+        </div>
+      )}
+
+      {isError && (
+        <div
+          className="shrink-0 border-t px-3.5 py-2.5 text-[11.5px] leading-relaxed text-[#fca5a5]"
+          style={{ borderColor: "#3a1f1f", background: "#170c0c" }}
+        >
+          このセッションは作業を完了できずに終了しました。
+          <span className="font-mono"> claude attach {lane.id} </span>
+          で開くと経緯を確認して再開できます。
         </div>
       )}
 

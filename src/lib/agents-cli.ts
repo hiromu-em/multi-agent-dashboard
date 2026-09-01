@@ -16,7 +16,7 @@ export interface CliAgent {
   kind: string;
   startedAt: number;
   pid?: number;
-  /** working | blocked | done */
+  /** working | blocked | done | failed | stopped（working 以外は終端状態） */
   state?: string;
   /** busy | idle | "" */
   status?: string;
@@ -37,15 +37,20 @@ export interface AgentLane {
 const TAGS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 function toLaneStatus(agent: CliAgent): LaneStatus {
-  // すでに終了していてプロセスも残っていないものは「停止済み」扱いにする。
-  if (agent.state === "done" && !agent.pid) return "killed";
   switch (agent.state) {
     case "working":
       return "running";
     case "blocked":
       return "waiting";
+    // エージェント自身が「これ以上進められない」と判断して終了した状態。
+    // 完了と同じ緑で出すと見落とすので、エラーとして扱う。
+    case "failed":
+      return "error";
+    case "stopped":
+      return "killed";
     case "done":
-      return "done";
+      // 正常終了でもプロセスが残っていなければ「停止済み」扱いにする。
+      return agent.pid ? "done" : "killed";
     default:
       return agent.status === "busy" ? "running" : "done";
   }

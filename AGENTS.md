@@ -54,12 +54,20 @@ CLI側に、当初自前で作ろうとしていた機能がすでに揃って�
 
 状態のマッピング（`src/lib/agents-cli.ts` の `toLaneStatus`）:
 
+CLIが返す `state` は `working` `blocked` `done` `failed` `stopped` の5種類で、`working` 以外はすべて終端状態。
+
 | CLIの `state` | レーンの表示 |
 |---|---|
 | `working` | 実行中 |
 | `blocked` | 対話待ち |
 | `done`（`pid`あり） | 完了 |
 | `done`（`pid`なし） | 停止済み |
+| `failed` | エラー |
+| `stopped` | 停止済み |
+
+`failed` は「エージェントが自分で作業を諦めて終了した」状態。これを拾わずに `done` へ倒すと、失敗したレーンが完了と同じ緑で並んで見落とすことになる。
+
+なお `claude agents --json` は既定では完了済みセッションを含まない。過去分も並べたい場合は `--all`、対象ディレクトリで絞りたい場合は `--cwd <path>` を付ける。
 
 ### 方式Aと方式B
 

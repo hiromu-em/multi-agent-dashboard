@@ -36,19 +36,46 @@ export default function DashboardPage() {
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
 
+  // 一覧から消えたセッションの分を各辞書から取り除く。
+  // これをやらないと、長く動かしている間ログや差分の文字列が溜まり続ける。
+  const pruneVanished = useCallback((list: ApiAgent[]) => {
+    const alive = new Set(list.map((a) => a.id));
+
+    // 消えたIDが無ければ同じ参照を返し、無駄な再レンダリングを避ける。
+    function prune<T>(prev: Record<string, T>): Record<string, T> {
+      const keys = Object.keys(prev);
+      if (keys.every((key) => alive.has(key))) return prev;
+      return Object.fromEntries(keys.filter((key) => alive.has(key)).map((key) => [key, prev[key]]));
+    }
+
+    setOutputs(prune);
+    setOutputLoading(prune);
+    setDiffOpen(prune);
+    setDiffs(prune);
+    setDiffLoading(prune);
+    setSeen(prune);
+
+    for (const id of Object.keys(prevStatus.current)) {
+      if (!alive.has(id)) delete prevStatus.current[id];
+    }
+  }, []);
+
   const fetchAgents = useCallback(async () => {
     try {
       const res = await fetch("/api/agents", { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.message ?? json?.error ?? "取得に失敗しました");
-      setAgents(json.agents ?? []);
+
+      const list: ApiAgent[] = json.agents ?? [];
+      setAgents(list);
+      pruneVanished(list);
       setLoadError(null);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error));
     } finally {
       setInitialLoaded(true);
     }
-  }, []);
+  }, [pruneVanished]);
 
   useEffect(() => {
     fetchAgents();
