@@ -25,12 +25,19 @@
 ### ディレクトリ
 
 ```
-src/app/                 UIページ（ダッシュボード本体）
-src/app/api/agents/      サブエージェントの起動・一覧・指示送信API（スタブ）
-src/app/api/agents/[id]/stream/  各サブエージェントの標準出力をSSEで配信するAPI（スタブ）
-.worktrees/              サブエージェント用 git worktree の作成先（gitignore対象、実行時に生成）
-.logs/                   ログの永続化先（gitignore対象、実行時に生成）
+src/app/page.tsx                 ダッシュボード本体
+src/components/LaneCard.tsx      1レーン分のボード
+src/lib/agents-cli.ts            claude CLI と git diff のラッパー
+src/lib/dashboard-data.ts        ステータスの配色・ラベル定義
+src/app/api/agents/              セッション一覧（GET）
+src/app/api/agents/[id]/logs/    ログ取得（GET）
+src/app/api/agents/[id]/diff/    作業ディレクトリの git diff（GET）
+src/app/api/agents/[id]/stop/    セッション停止（POST）
+src/app/api/agents/[id]/stream/  SSE配信（方式B用スタブ、未実装）
+.logs/                           ログの永続化先（gitignore対象、未実装）
 ```
+
+実装の詳細・設計判断の理由・環境固有の注意点は `AGENTS.md` に集約している。
 
 ### 未決定・要検討
 
