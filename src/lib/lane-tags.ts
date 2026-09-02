@@ -9,9 +9,13 @@ const TAGS_FILE = join(process.cwd(), ".logs", "tags.json");
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
-// 終了したセッションのタグをすぐ再利用すると「さっき言っていた #B」と混同する。
-// この期間は空けてから再利用する。
-const RECYCLE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+// タグは使い回す。生きているセッションが持っていないものは再利用の候補になる。
+// ただし終了直後のタグをすぐ配ると「さっき言っていた #B」と混同するので、
+// 未使用のタグを先に配り、次に「手放されてから最も長いもの」を選ぶ。
+// 26個すべてが生きたセッションに使われている場合だけ #27 以降に落ちる。
+
+// 記録を無限に溜めないための保持期間。再利用の可否ではなく掃除のための値。
+const KEEP_RECORD_MS = 90 * 24 * 60 * 60 * 1000;
 
 // ポーリングのたびに書き込まないための最短間隔。
 const WRITE_INTERVAL_MS = 30 * 1000;
@@ -56,16 +60,28 @@ async function save(store: TagStore): Promise<void> {
   }
 }
 
-/** 予約済みでない最小のタグを返す。A〜Zを使い切ったら #27 以降の数字にする。 */
-function nextFreeTag(reserved: Set<string>): string {
-  for (const letter of LETTERS) {
-    const tag = `#${letter}`;
-    if (!reserved.has(tag)) return tag;
+/**
+ * 次に配るタグを選ぶ。`taken` は今この瞬間に使われているタグ。
+ *
+ * 一度も使っていないタグを優先し、無ければ最後に見かけたのが最も古いタグを選ぶ。
+ * こうすると、直前に終わったセッションのタグが真っ先に配られることはない。
+ * A〜Zがすべて生きたセッションに使われているときだけ #27 以降になる。
+ */
+function nextFreeTag(taken: Set<string>, tagLastSeen: Map<string, number>): string {
+  const free = LETTERS.map((letter) => `#${letter}`).filter((tag) => !taken.has(tag));
+
+  if (free.length === 0) {
+    for (let n = LETTERS.length + 1; ; n++) {
+      const tag = `#${n}`;
+      if (!taken.has(tag)) return tag;
+    }
   }
-  for (let n = LETTERS.length + 1; ; n++) {
-    const tag = `#${n}`;
-    if (!reserved.has(tag)) return tag;
-  }
+
+  const unused = free.filter((tag) => !tagLastSeen.has(tag));
+  if (unused.length > 0) return unused[0];
+
+  // 手放されてから最も長いものから配る。同着はアルファベット順で決める。
+  return free.sort((a, b) => (tagLastSeen.get(a) ?? 0) - (tagLastSeen.get(b) ?? 0))[0];
 }
 
 export interface TaggableSession {
@@ -79,43 +95,53 @@ export interface TaggableSession {
  * 既に割り当て済みのセッションはそのタグを保ち、新しいセッションだけが
  * 空いているタグを受け取る。並び順（開始時刻の昇順）とは独立しているので、
  * 表示は `#A #C #D` のように飛ぶことがある。宛先の同一性を優先した結果。
+ *
+ * 終了したセッションのタグは再利用する。ただし配る順序で間隔を稼ぐので、
+ * 直前に終わったタグがすぐ次のセッションに渡ることはない。
  */
 export async function assignTags(sessions: TaggableSession[]): Promise<Map<string, string>> {
   const store = await load();
   const now = Date.now();
   const assigned = new Map<string, string>();
 
-  // 最近まで生きていたタグは、たとえ今の一覧に無くても新規割り当てに使わない。
-  const reserved = new Set<string>();
+  // タグごとに「最後に見かけた時刻」を出す。同じタグを過去に複数のセッションが
+  // 使っていることがあるので、最も新しいものを採る。
+  const tagLastSeen = new Map<string, number>();
   for (const record of Object.values(store)) {
-    if (now - record.lastSeen < RECYCLE_AFTER_MS) reserved.add(record.tag);
+    const seen = tagLastSeen.get(record.tag);
+    if (seen === undefined || record.lastSeen > seen) tagLastSeen.set(record.tag, record.lastSeen);
   }
 
   const ordered = [...sessions].sort((a, b) => a.startedAt - b.startedAt);
   let structuralChange = false;
+
+  // 今この瞬間に使われているタグ。これ以外はすべて再利用の候補。
+  const taken = new Set<string>();
 
   // 既知のセッションは自分のタグを維持する。
   for (const session of ordered) {
     const record = store[session.sessionId];
     if (!record) continue;
     record.lastSeen = now;
-    reserved.add(record.tag);
+    tagLastSeen.set(record.tag, now);
+    taken.add(record.tag);
     assigned.set(session.sessionId, record.tag);
   }
 
-  // 残りに空きタグを配る。古いセッションから順に配るので、並びとタグは概ね一致する。
+  // 残りにタグを配る。古いセッションから順に配るので、並びとタグは概ね一致する。
   for (const session of ordered) {
     if (assigned.has(session.sessionId)) continue;
-    const tag = nextFreeTag(reserved);
-    reserved.add(tag);
+    const tag = nextFreeTag(taken, tagLastSeen);
+    taken.add(tag);
+    tagLastSeen.set(tag, now);
     store[session.sessionId] = { tag, lastSeen: now };
     assigned.set(session.sessionId, tag);
     structuralChange = true;
   }
 
-  // 長く見かけないセッションの記録は捨てる。ここで初めてタグが再利用可能になる。
+  // 古い記録の掃除。再利用の可否には影響しない（タグは常に使い回せる）。
   for (const [sessionId, record] of Object.entries(store)) {
-    if (now - record.lastSeen > RECYCLE_AFTER_MS) {
+    if (now - record.lastSeen > KEEP_RECORD_MS) {
       delete store[sessionId];
       structuralChange = true;
     }
