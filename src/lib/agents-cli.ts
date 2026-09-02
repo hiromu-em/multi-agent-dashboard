@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LaneStatus } from "@/lib/dashboard-data";
+import { assignTags } from "@/lib/lane-tags";
 
 const run = promisify(execFile);
 
@@ -34,8 +35,6 @@ export interface AgentLane {
   isAlive: boolean;
 }
 
-const TAGS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-
 function toLaneStatus(agent: CliAgent): LaneStatus {
   switch (agent.state) {
     case "working":
@@ -65,18 +64,21 @@ export async function listAgents(): Promise<AgentLane[]> {
   const parsed: unknown = JSON.parse(stdout);
   if (!Array.isArray(parsed)) return [];
 
-  return (parsed as CliAgent[])
-    .sort((a, b) => a.startedAt - b.startedAt)
-    .map((agent, i) => ({
-      id: agent.id,
-      sessionId: agent.sessionId,
-      tag: `#${TAGS[i] ?? i + 1}`,
-      name: agent.name?.trim() || agent.id,
-      cwd: agent.cwd,
-      status: toLaneStatus(agent),
-      startedAt: agent.startedAt,
-      isAlive: typeof agent.pid === "number",
-    }));
+  const agents = (parsed as CliAgent[]).sort((a, b) => a.startedAt - b.startedAt);
+
+  // タグは並び順ではなくsessionIdに紐づく。指示の宛先として使うので動いてはいけない。
+  const tags = await assignTags(agents);
+
+  return agents.map((agent) => ({
+    id: agent.id,
+    sessionId: agent.sessionId,
+    tag: tags.get(agent.sessionId) ?? "#?",
+    name: agent.name?.trim() || agent.id,
+    cwd: agent.cwd,
+    status: toLaneStatus(agent),
+    startedAt: agent.startedAt,
+    isAlive: typeof agent.pid === "number",
+  }));
 }
 
 // ログは `claude logs` ではなくセッションの会話JSONLから読む（src/lib/transcript.ts）。
