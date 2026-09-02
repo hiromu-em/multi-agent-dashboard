@@ -21,9 +21,26 @@ import { fileURLToPath } from "node:url";
 const PROJECT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LOGS_DIR = join(PROJECT_DIR, ".logs");
 
-const DIM = "[2m";
-const ORANGE = "[38;5;208m";
-const RESET = "[0m";
+// 色はダッシュボードの配色に合わせる。
+// オレンジは宛先だけに使い、そこが一番目に入るようにする。
+const RESET = "\x1b[0m";
+const DIM = "\x1b[2m";
+const BLUE = "\x1b[38;5;110m"; // モデル
+const GRAY = "\x1b[38;5;245m"; // パス
+const PURPLE = "\x1b[38;5;140m"; // ブランチ
+const ORANGE = "\x1b[38;5;208m"; // 宛先
+
+// コンテキストは使用率で色を変える。数字だけでは切迫しているか読み取れない。
+const GREEN = "\x1b[38;5;114m";
+const AMBER = "\x1b[38;5;221m";
+const RED = "\x1b[38;5;210m";
+
+function contextColor(percentage) {
+  if (typeof percentage !== "number") return DIM;
+  if (percentage >= 80) return RED;
+  if (percentage >= 50) return AMBER;
+  return GREEN;
+}
 
 function readTarget() {
   try {
@@ -57,7 +74,7 @@ function shortenPath(path) {
   return parts.slice(-2).join(sep);
 }
 
-/** ブランチ名。渡されなければ .git/HEAD を読む（gitの起動より軽い）。 */
+/** ブランチ名。渡されなければ `.git/HEAD` を読む（gitの起動より軽い）。 */
 function branchName(input, cwd) {
   const given =
     input?.workspace?.branch ??
@@ -84,16 +101,22 @@ function branchName(input, cwd) {
   }
 }
 
-function contextLabel(input) {
+function contextInfo(input) {
   const context = input?.context_window;
-  if (!context) return input?.exceeds_200k_tokens ? "200k超" : "";
+  if (!context) {
+    return input?.exceeds_200k_tokens ? { label: "200k超", percentage: 100 } : null;
+  }
 
   const used = context.used_percentage;
-  if (typeof used === "number" && Number.isFinite(used)) return `${Math.round(used)}%`;
+  if (typeof used === "number" && Number.isFinite(used)) {
+    return { label: `${Math.round(used)}%`, percentage: used };
+  }
 
   const tokens = context.total_input_tokens;
-  if (typeof tokens === "number" && tokens > 0) return `${Math.round(tokens / 1000)}k`;
-  return "";
+  if (typeof tokens === "number" && tokens > 0) {
+    return { label: `${Math.round(tokens / 1000)}k`, percentage: undefined };
+  }
+  return null;
 }
 
 async function main() {
@@ -109,22 +132,21 @@ async function main() {
   keepSample(input);
 
   const cwd = input?.workspace?.current_dir ?? input?.cwd ?? process.cwd();
-
   const parts = [];
 
   const model = input?.model?.display_name ?? input?.model?.id;
-  if (model) parts.push(`${DIM}${model}${RESET}`);
+  if (model) parts.push(`${BLUE}${model}${RESET}`);
 
-  const context = contextLabel(input);
-  if (context) parts.push(`${DIM}${context}${RESET}`);
+  const context = contextInfo(input);
+  if (context) parts.push(`${contextColor(context.percentage)}${context.label}${RESET}`);
 
   const path = shortenPath(cwd);
-  if (path) parts.push(`${DIM}${path}${RESET}`);
+  if (path) parts.push(`${GRAY}${path}${RESET}`);
 
   const branch = branchName(input, cwd);
-  if (branch) parts.push(`${DIM}${branch}${RESET}`);
+  if (branch) parts.push(`${PURPLE}${branch}${RESET}`);
 
-  // 宛先は最後。ここだけ色を付けて、目に留まるようにする。
+  // 宛先は最後。ここだけ強い色にして、目に留まるようにする。
   const target = readTarget();
   if (target) {
     const name = target.name ? ` ${target.name}` : "";
