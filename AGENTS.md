@@ -139,7 +139,10 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 
 **この方式は誤爆する。** 宛先が残っているのを忘れて窓口に話しかけると、その文がエージェントへ飛ぶ。Enterを押した時点で配送されるので取り消せない。したがって**現在の宛先を常時表示することが必須**：
 
-- `statusLine` 設定（任意コマンドの出力をCLI下部に常時表示できる）で `→ #B 認証機能` のように出す
+- `statusLine` 設定（任意コマンドの出力をCLI下部に常時表示できる）で出す。**設定すると標準の表示は置き換わる**ので、`scripts/statusline.mjs` はモデル・コンテキスト・パス・ブランチを出し直したうえで、最後に `→ #B 認証機能` を色付きで足している
+- **`statusLine` は `args` を受け付けない**（スキーマは `type` / `command` / `padding` / `refreshInterval` / `hideVimModeIndicator`）。`"command": "node scripts/statusline.mjs"` のように1つの文字列で書く。フック側は `args` を使える
+- ステータスラインに渡る内容は `context_window`（`used_percentage` など）・`model.display_name`・`workspace.current_dir` を含む。版で変わるので、スクリプトは初回の入力を `.logs/statusline-sample.json` に1度だけ残す
+- 宛先ファイルはスクリプト自身の位置から辿る。**窓口はダッシュボードのリポジトリの外で動くことが多い**ため、セッションの作業ディレクトリを基準にしてはいけない
 - ダッシュボード側でも現在の宛先レーンを強調する
 
 宛先のセッションが終了・消滅したら自動で解除して窓口に戻す。消えたセッション宛てに打ち続けるのを防ぐため。
