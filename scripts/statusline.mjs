@@ -134,17 +134,20 @@ async function main() {
   const cwd = input?.workspace?.current_dir ?? input?.cwd ?? process.cwd();
   const parts = [];
 
+  // ラベルは暗く、値は色付き。何の数字なのかが一目で分かり、値だけが浮く。
+  const field = (label, color, value) => `${DIM}${label}:${RESET}${color}${value}${RESET}`;
+
   const model = input?.model?.display_name ?? input?.model?.id;
-  if (model) parts.push(`${BLUE}${model}${RESET}`);
+  if (model) parts.push(field("model", BLUE, model));
 
   const context = contextInfo(input);
-  if (context) parts.push(`${contextColor(context.percentage)}${context.label}${RESET}`);
+  if (context) parts.push(field("ctx", contextColor(context.percentage), context.label));
 
   const path = shortenPath(cwd);
-  if (path) parts.push(`${GRAY}${path}${RESET}`);
+  if (path) parts.push(field("dir", GRAY, path));
 
   const branch = branchName(input, cwd);
-  if (branch) parts.push(`${PURPLE}${branch}${RESET}`);
+  if (branch) parts.push(field("git", PURPLE, branch));
 
   // 宛先は最後。ここだけ強い色にして、目に留まるようにする。
   const target = readTarget();
