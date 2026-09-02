@@ -21,6 +21,8 @@ export interface LaneView {
   diff: string;
   diffLoading: boolean;
   hasNotification: boolean;
+  /** 窓口CLIで `#` を省いた入力が飛ぶ先か。 */
+  isTarget: boolean;
 }
 
 interface LaneCardProps {
@@ -141,8 +143,13 @@ export default function LaneCard({
     flexDirection: "column",
     background: "#15171b",
     borderRadius: 10,
-    border: `1px solid ${lane.hasNotification ? meta.border : "#23262b"}`,
-    boxShadow: lane.hasNotification ? `0 0 0 1px ${meta.border}` : "none",
+    // 宛先のレーンは常に分かるようにする。誤爆はここを見落とすことで起きる。
+    border: `1px solid ${lane.isTarget ? "#f2874a" : lane.hasNotification ? meta.border : "#23262b"}`,
+    boxShadow: lane.isTarget
+      ? "0 0 0 1px #f2874a"
+      : lane.hasNotification
+        ? `0 0 0 1px ${meta.border}`
+        : "none",
     opacity: isKilled ? 0.62 : 1,
     overflow: "hidden",
     transition: "box-shadow .2s ease, opacity .2s ease",
@@ -153,6 +160,15 @@ export default function LaneCard({
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[#1f2226] px-3.5 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 font-mono text-xs font-bold text-[#f2874a]">{lane.tag}</span>
+          {lane.isTarget && (
+            <span
+              className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
+              style={{ color: "#f2874a", background: "rgba(242,135,74,0.14)" }}
+              title="窓口CLIで # を省いた入力はこのレーンへ送られます"
+            >
+              宛先
+            </span>
+          )}
           <span className="truncate text-[13px] font-semibold text-[#e6e8eb]">{lane.name}</span>
           {lane.hasNotification && (
             <span

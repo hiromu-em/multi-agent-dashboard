@@ -38,6 +38,7 @@ yarn-error.log*
 
 # サブエージェント用の git worktree（実行時に動的に作成・削除される）
 /.worktrees/
+/.claude/worktrees/
 
 # ログの永続化先
 /.logs/

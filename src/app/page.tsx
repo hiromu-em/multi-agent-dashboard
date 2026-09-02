@@ -33,6 +33,8 @@ export default function DashboardPage() {
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [diffLoading, setDiffLoading] = useState<Record<string, boolean>>({});
   const [seen, setSeen] = useState<Record<string, LaneStatus>>({});
+  const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
+  const [queued, setQueued] = useState(0);
 
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
@@ -61,6 +63,18 @@ export default function DashboardPage() {
     }
   }, []);
 
+  // 窓口CLIで `#` を省いた入力が飛ぶ先。誤爆を防ぐため盤面でも強調する。
+  const fetchTarget = useCallback(async () => {
+    try {
+      const res = await fetch("/api/dispatch", { cache: "no-store" });
+      const json = await res.json();
+      setTargetSessionId(json?.target?.sessionId ?? null);
+      setQueued(json?.queued ?? 0);
+    } catch {
+      // 表示だけの情報なので、取れなければ前回のままにする。
+    }
+  }, []);
+
   const fetchAgents = useCallback(async () => {
     try {
       const res = await fetch("/api/agents", { cache: "no-store" });
@@ -79,10 +93,14 @@ export default function DashboardPage() {
   }, [pruneVanished]);
 
   useEffect(() => {
-    fetchAgents();
-    const timer = setInterval(fetchAgents, AGENTS_POLL_MS);
+    const poll = () => {
+      fetchAgents();
+      fetchTarget();
+    };
+    poll();
+    const timer = setInterval(poll, AGENTS_POLL_MS);
     return () => clearInterval(timer);
-  }, [fetchAgents]);
+  }, [fetchAgents, fetchTarget]);
 
   const visibleAgents = useMemo(() => agents.slice(0, laneCount), [agents, laneCount]);
   const focusedAgent = focusedId ? (agents.find((a) => a.id === focusedId) ?? null) : null;
@@ -191,6 +209,10 @@ export default function DashboardPage() {
     setLaneCountState(n);
   }
 
+  const targetAgent = targetSessionId
+    ? (agents.find((a) => a.sessionId === targetSessionId) ?? null)
+    : null;
+
   const lanes: LaneView[] = displayAgents.map((a) => ({
     id: a.id,
     sessionId: a.sessionId,
@@ -205,6 +227,7 @@ export default function DashboardPage() {
     diff: diffs[a.id] ?? "",
     diffLoading: diffLoading[a.id] ?? false,
     hasNotification: seen[a.id] !== undefined,
+    isTarget: a.sessionId === targetSessionId,
   }));
 
   return (
@@ -221,7 +244,15 @@ export default function DashboardPage() {
             Multi-Agent Dashboard
           </div>
           <div className="font-mono text-[11.5px] text-[#8a8f98]">
-            claude agents --json · {agents.length} セッション
+            {agents.length} セッション
+            {targetAgent ? (
+              <span className="ml-2 text-[#f2874a]">
+                → {targetAgent.tag} {targetAgent.name} に送信中
+              </span>
+            ) : (
+              <span className="ml-2 text-[#5c6067]">宛先なし</span>
+            )}
+            {queued > 0 && <span className="ml-2 text-[#fbbf24]">順番待ち {queued} 件</span>}
             {loadError && <span className="ml-2 text-[#f87171]">{loadError}</span>}
           </div>
         </div>

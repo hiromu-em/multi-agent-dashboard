@@ -59,8 +59,30 @@ function toLaneStatus(agent: CliAgent): LaneStatus {
   }
 }
 
+// 直近の取得結果を短時間だけ使い回す。
+//
+// Diffや指示の配送はIDから作業ディレクトリやsessionIdを引くために一覧を要求するが、
+// そのたびに `claude.exe`（218MB）を起動していた。画面のポーリングは4秒間隔なので、
+// それより短いTTLなら表示の鮮度を落とさずに重複した起動だけを潰せる。
+const LIST_TTL_MS = 1500;
+
+let cached: { at: number; lanes: AgentLane[] } | null = null;
+let inFlight: Promise<AgentLane[]> | null = null;
+
 /** 稼働中のサブエージェントセッションを取得してレーン形式に変換する。 */
 export async function listAgents(): Promise<AgentLane[]> {
+  if (cached && Date.now() - cached.at < LIST_TTL_MS) return cached.lanes;
+
+  // 同時に複数の要求が来ても起動は1回で済ませる。
+  if (!inFlight) {
+    inFlight = fetchAgents().finally(() => {
+      inFlight = null;
+    });
+  }
+  return inFlight;
+}
+
+async function fetchAgents(): Promise<AgentLane[]> {
   // `--all` が無いと、終了したセッション（failed / 停止済み）が一覧から消える。
   // 失敗したレーンこそ見落としてはいけないので、終わったものも含めて取得する。
   const { stdout } = await run(CLAUDE_BIN, ["agents", "--json", "--all"], {
@@ -84,7 +106,7 @@ export async function listAgents(): Promise<AgentLane[]> {
     })),
   );
 
-  return agents
+  const lanes = agents
     .filter((agent) => tags.has(agent.sessionId))
     .map((agent) => ({
       id: agent.id,
@@ -96,6 +118,14 @@ export async function listAgents(): Promise<AgentLane[]> {
       startedAt: agent.startedAt,
       isAlive: typeof agent.pid === "number",
     }));
+
+  cached = { at: Date.now(), lanes };
+  return lanes;
+}
+
+/** 指示を配送した直後など、次の取得で必ず最新を見たいときに使う。 */
+export function invalidateAgentCache(): void {
+  cached = null;
 }
 
 // ログは `claude logs` ではなくセッションの会話JSONLから読む（src/lib/transcript.ts）。
