@@ -29,6 +29,7 @@ src/app/page.tsx                 ダッシュボード本体
 src/components/LaneCard.tsx      1レーン分のボード
 src/lib/agents-cli.ts            claude CLI と git diff のラッパー
 src/lib/transcript.ts            セッションの会話JSONLの読み取り
+src/lib/agent-diff.ts            作業ディレクトリの変更収集
 src/lib/dashboard-data.ts        ステータスの配色・ラベル定義
 src/app/api/agents/              セッション一覧（GET）
 src/app/api/agents/[id]/logs/    会話取得（GET）

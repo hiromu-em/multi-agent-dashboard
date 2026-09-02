@@ -240,7 +240,7 @@ export default function LaneCard({
               </div>
             ))
           ) : (
-            <div className="px-3.5 py-1.5 text-[#5c6067]">未コミットの変更はありません</div>
+            <div className="px-3.5 py-1.5 text-[#5c6067]">変更はありません</div>
           )}
         </div>
       )}

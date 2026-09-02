@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LaneStatus } from "@/lib/dashboard-data";
+import { collectDiff } from "@/lib/agent-diff";
 import { registerSessions } from "@/lib/lane-registry";
 
 const run = promisify(execFile);
@@ -106,21 +107,15 @@ export async function stopAgent(id: string): Promise<void> {
 }
 
 /**
- * そのセッションの作業ディレクトリでの `git diff` を取得する。
- * git管理下でない場合や差分が無い場合は空文字を返す。
+ * そのセッションの作業ディレクトリの変更を取得する。
+ *
+ * 作業ディレクトリはクライアントから受け取らず、実在するセッションと
+ * 突き合わせて解決する。任意のパスを覗ける口にしないため。
  */
 export async function readAgentDiff(id: string): Promise<string> {
   const agents = await listAgents();
   const agent = agents.find((a) => a.id === id);
   if (!agent) throw new Error(`agent not found: ${id}`);
 
-  try {
-    const { stdout } = await run("git", ["-C", agent.cwd, "diff", "--unified=3"], {
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    return stdout.trim();
-  } catch {
-    // gitリポジトリでない場合など。差分なしとして扱う。
-    return "";
-  }
+  return collectDiff(agent.cwd);
 }

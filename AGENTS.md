@@ -27,13 +27,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 |---|---|
 | `src/app/page.tsx` | ダッシュボード本体。ポーリング、レーン数切替、フォーカス表示、Kill確認 |
 | `src/components/LaneCard.tsx` | 1レーン分のボード。会話表示（最新追従つき）、Diffパネル、各種ボタン |
-| `src/lib/agents-cli.ts` | `claude` CLIと `git diff` のラッパー。状態マッピング |
+| `src/lib/agents-cli.ts` | `claude` CLIのラッパー。状態マッピング |
+| `src/lib/agent-diff.ts` | 作業ディレクトリの変更収集（未コミット・新規・コミット済み） |
 | `src/lib/transcript.ts` | セッションの会話JSONLを読んで表示用に整形する |
 | `src/lib/lane-registry.ts` | セッションの台帳。タグの割り当てと終了時刻の記録（`.logs/sessions.json`） |
 | `src/lib/dashboard-data.ts` | ステータスの配色・ラベル定義 |
 | `src/app/api/agents/route.ts` | セッション一覧（GET） |
 | `src/app/api/agents/[id]/logs/route.ts` | 会話取得（GET）。`?session=<uuid>` を取る |
-| `src/app/api/agents/[id]/diff/route.ts` | 作業ディレクトリの `git diff`（GET） |
+| `src/app/api/agents/[id]/diff/route.ts` | 作業ディレクトリの変更（GET） |
 | `src/app/api/agents/[id]/stop/route.ts` | セッション停止（POST） |
 | `src/app/api/agents/[id]/stream/route.ts` | SSE配信のスタブ（未実装。JSONLの更新通知に使う想定） |
 
@@ -78,6 +79,26 @@ CLIが返す `state` は `working` `blocked` `done` `failed` `stopped` の5種�
 `--all` は過去の完了分も全部返すので、終わったレーンは**終了から3時間で盤面から落とす**（`src/lib/lane-registry.ts` の `RETENTION_MS`）。終了時刻はCLIが返さないので、終端状態を最初に観測した時刻を台帳に記録して起点にしている。
 
 **対話待ち（`blocked`）は打ち切りの対象外。** 人の応答を待っている状態なので、消すと返事待ちのレーンに気づけなくなる。
+
+### Diffは `git diff` だけでは足りない
+
+引数なしの `git diff` は「作業ツリーとステージの差」しか出さない。エージェントは新しいファイルを作り、区切りで `git add` するので、それだけを見ていると**真面目に作業しているほど差分が消える**。実際には大量に変更されているのに「変更なし」と表示されてしまう。
+
+`src/lib/agent-diff.ts` が3つを合わせて出す。
+
+| 対象 | 取り方 |
+|---|---|
+| 追跡済みファイルの未コミット変更（ステージ済みを含む） | `git diff HEAD` |
+| 新規ファイル | `git ls-files --others --exclude-standard` で列挙し、1件ずつ `git diff --no-index -- /dev/null <file>` |
+| エージェントがコミットした分 | `git diff <base>...HEAD`（base は `main` → `master` の順に探す） |
+
+注意点:
+
+- **`git add` してはいけない。** 新規ファイルを差分にするために `--intent-to-add` を使うとエージェントのインデックスを書き換えてしまう。`--no-index` は読み取りだけで済む
+- `git diff --no-index` は**差分があると終了コード1を返す**。`execFile` はこれを例外にするので、code 1 のときは stdout を使う
+- コミットが1つも無いリポジトリでは `git diff HEAD` が失敗する。`git diff --cached` にフォールバックし、それも失敗するならgit管理下ではないとみなす
+- 分岐元が分からないときはコミット済み差分を出さない。推測で誤ったものを見せるより出さない
+- 新規ファイルは20件、差分全体は40万文字が上限。巨大な生成物でパネルと通信を潰さないため
 
 ### ログは会話JSONLから読む（`claude logs` は使わない）
 
