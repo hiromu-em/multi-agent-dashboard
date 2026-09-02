@@ -1,11 +1,18 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+// セッションごとの台帳。タグと「いつ終わったか」を覚えている。
+//
 // タグ（#A #B …）はレーンの並び順ではなく「指示の宛先」なので、
 // 一度割り当てたらセッションが終わるまで動いてはいけない。
 // 配列の添字から作ると、古いセッションが1つ消えるだけで後続が繰り上がり、
 // `#C` 宛ての指示が別のセッションへ届く。だからsessionIdに紐づけて永続化する。
-const TAGS_FILE = join(process.cwd(), ".logs", "tags.json");
+const REGISTRY_FILE = join(process.cwd(), ".logs", "sessions.json");
+
+// 終わったレーンを盤面に残す時間。これを過ぎたら表示しない。
+// `claude agents --json --all` は完了済みも返すので、これが無いと
+// 過去のレーンが溜まって、生きているレーンを画面から押し出す。
+const RETENTION_MS = 3 * 60 * 60 * 1000;
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
@@ -20,27 +27,33 @@ const KEEP_RECORD_MS = 90 * 24 * 60 * 60 * 1000;
 // ポーリングのたびに書き込まないための最短間隔。
 const WRITE_INTERVAL_MS = 30 * 1000;
 
-interface TagRecord {
+interface SessionRecord {
   tag: string;
-  /** 最後にセッション一覧で見かけた時刻。再利用の判断に使う。 */
+  /** 最後にセッション一覧で見かけた時刻。タグ再利用の判断に使う。 */
   lastSeen: number;
+  /** 終わった状態で最初に見かけた時刻。表示を打ち切る起点。 */
+  endedAt?: number;
 }
 
-type TagStore = Record<string, TagRecord>;
+type SessionStore = Record<string, SessionRecord>;
 
 let lastWrite = 0;
 
-async function load(): Promise<TagStore> {
+async function load(): Promise<SessionStore> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(TAGS_FILE, "utf8"));
+    const parsed: unknown = JSON.parse(await readFile(REGISTRY_FILE, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
 
     // 壊れた記録は捨てる。タグは作り直せるので落ちるより作り直すほうがよい。
-    const store: TagStore = {};
+    const store: SessionStore = {};
     for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const record = value as { tag?: unknown; lastSeen?: unknown };
+      const record = value as { tag?: unknown; lastSeen?: unknown; endedAt?: unknown };
       if (typeof record?.tag === "string" && typeof record?.lastSeen === "number") {
-        store[sessionId] = { tag: record.tag, lastSeen: record.lastSeen };
+        store[sessionId] = {
+          tag: record.tag,
+          lastSeen: record.lastSeen,
+          endedAt: typeof record.endedAt === "number" ? record.endedAt : undefined,
+        };
       }
     }
     return store;
@@ -50,10 +63,10 @@ async function load(): Promise<TagStore> {
   }
 }
 
-async function save(store: TagStore): Promise<void> {
+async function save(store: SessionStore): Promise<void> {
   try {
-    await mkdir(dirname(TAGS_FILE), { recursive: true });
-    await writeFile(TAGS_FILE, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    await mkdir(dirname(REGISTRY_FILE), { recursive: true });
+    await writeFile(REGISTRY_FILE, `${JSON.stringify(store, null, 2)}\n`, "utf8");
     lastWrite = Date.now();
   } catch {
     // 書けなくてもタグの割り当て自体は返せる。次回に任せる。
@@ -84,13 +97,19 @@ function nextFreeTag(taken: Set<string>, tagLastSeen: Map<string, number>): stri
   return free.sort((a, b) => (tagLastSeen.get(a) ?? 0) - (tagLastSeen.get(b) ?? 0))[0];
 }
 
-export interface TaggableSession {
+export interface RegisteredSession {
   sessionId: string;
   startedAt: number;
+  /**
+   * 終わったレーンか。`done` `failed` `stopped` は true。
+   * `blocked`（対話待ち）は人の応答を待っている状態なので false のまま扱う。
+   * 消してしまうと、返事を待っているレーンに気づけなくなる。
+   */
+  isFinished: boolean;
 }
 
 /**
- * sessionId ごとに安定したタグを割り当てて返す。
+ * sessionId ごとに安定したタグを割り当て、表示すべきセッションだけを返す。
  *
  * 既に割り当て済みのセッションはそのタグを保ち、新しいセッションだけが
  * 空いているタグを受け取る。並び順（開始時刻の昇順）とは独立しているので、
@@ -98,8 +117,13 @@ export interface TaggableSession {
  *
  * 終了したセッションのタグは再利用する。ただし配る順序で間隔を稼ぐので、
  * 直前に終わったタグがすぐ次のセッションに渡ることはない。
+ *
+ * 終わってから `RETENTION_MS` を過ぎたセッションは戻り値に含めない。
+ * 呼び出し側はこのMapに無いものをレーンから外す。
  */
-export async function assignTags(sessions: TaggableSession[]): Promise<Map<string, string>> {
+export async function registerSessions(
+  sessions: RegisteredSession[],
+): Promise<Map<string, string>> {
   const store = await load();
   const now = Date.now();
   const assigned = new Map<string, string>();
@@ -115,11 +139,37 @@ export async function assignTags(sessions: TaggableSession[]): Promise<Map<strin
   const ordered = [...sessions].sort((a, b) => a.startedAt - b.startedAt);
   let structuralChange = false;
 
+  // 終了時刻を記録し、まだ盤面に残すべきものだけを選ぶ。
+  const visible: RegisteredSession[] = [];
+  for (const session of ordered) {
+    const record = store[session.sessionId];
+
+    if (!session.isFinished) {
+      // 実行中・対話待ちは常に表示する。再開したなら終了の記録は取り消す。
+      if (record?.endedAt !== undefined) {
+        record.endedAt = undefined;
+        structuralChange = true;
+      }
+      visible.push(session);
+      continue;
+    }
+
+    // 終わった状態を最初に見かけた時刻を起点にする。
+    // ダッシュボード起動前に終わっていたセッションは、初めて見た時刻が起点になる。
+    if (record && record.endedAt === undefined) {
+      record.endedAt = now;
+      structuralChange = true;
+    }
+
+    const endedAt = record?.endedAt ?? now;
+    if (now - endedAt <= RETENTION_MS) visible.push(session);
+  }
+
   // 今この瞬間に使われているタグ。これ以外はすべて再利用の候補。
   const taken = new Set<string>();
 
   // 既知のセッションは自分のタグを維持する。
-  for (const session of ordered) {
+  for (const session of visible) {
     const record = store[session.sessionId];
     if (!record) continue;
     record.lastSeen = now;
@@ -129,12 +179,16 @@ export async function assignTags(sessions: TaggableSession[]): Promise<Map<strin
   }
 
   // 残りにタグを配る。古いセッションから順に配るので、並びとタグは概ね一致する。
-  for (const session of ordered) {
+  for (const session of visible) {
     if (assigned.has(session.sessionId)) continue;
     const tag = nextFreeTag(taken, tagLastSeen);
     taken.add(tag);
     tagLastSeen.set(tag, now);
-    store[session.sessionId] = { tag, lastSeen: now };
+    store[session.sessionId] = {
+      tag,
+      lastSeen: now,
+      endedAt: session.isFinished ? now : undefined,
+    };
     assigned.set(session.sessionId, tag);
     structuralChange = true;
   }

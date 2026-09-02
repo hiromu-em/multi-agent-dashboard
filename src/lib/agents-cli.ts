@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LaneStatus } from "@/lib/dashboard-data";
-import { assignTags } from "@/lib/lane-tags";
+import { registerSessions } from "@/lib/lane-registry";
 
 const run = promisify(execFile);
 
@@ -35,6 +35,9 @@ export interface AgentLane {
   isAlive: boolean;
 }
 
+// 盤面から落とす対象になる状態。対話待ちは人の応答待ちなので含めない。
+const FINISHED_STATUSES = new Set<LaneStatus>(["done", "error", "killed"]);
+
 function toLaneStatus(agent: CliAgent): LaneStatus {
   switch (agent.state) {
     case "working":
@@ -57,7 +60,9 @@ function toLaneStatus(agent: CliAgent): LaneStatus {
 
 /** 稼働中のサブエージェントセッションを取得してレーン形式に変換する。 */
 export async function listAgents(): Promise<AgentLane[]> {
-  const { stdout } = await run(CLAUDE_BIN, ["agents", "--json"], {
+  // `--all` が無いと、終了したセッション（failed / 停止済み）が一覧から消える。
+  // 失敗したレーンこそ見落としてはいけないので、終わったものも含めて取得する。
+  const { stdout } = await run(CLAUDE_BIN, ["agents", "--json", "--all"], {
     maxBuffer: 8 * 1024 * 1024,
   });
 
@@ -65,20 +70,31 @@ export async function listAgents(): Promise<AgentLane[]> {
   if (!Array.isArray(parsed)) return [];
 
   const agents = (parsed as CliAgent[]).sort((a, b) => a.startedAt - b.startedAt);
+  const statuses = new Map(agents.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
 
   // タグは並び順ではなくsessionIdに紐づく。指示の宛先として使うので動いてはいけない。
-  const tags = await assignTags(agents);
+  // 台帳は同時に、終わってから時間の経ったレーンを一覧から落とす。
+  const tags = await registerSessions(
+    agents.map((agent) => ({
+      sessionId: agent.sessionId,
+      startedAt: agent.startedAt,
+      // 対話待ち（waiting）は終了扱いにしない。返事を待っているレーンは消さない。
+      isFinished: FINISHED_STATUSES.has(statuses.get(agent.sessionId) ?? "done"),
+    })),
+  );
 
-  return agents.map((agent) => ({
-    id: agent.id,
-    sessionId: agent.sessionId,
-    tag: tags.get(agent.sessionId) ?? "#?",
-    name: agent.name?.trim() || agent.id,
-    cwd: agent.cwd,
-    status: toLaneStatus(agent),
-    startedAt: agent.startedAt,
-    isAlive: typeof agent.pid === "number",
-  }));
+  return agents
+    .filter((agent) => tags.has(agent.sessionId))
+    .map((agent) => ({
+      id: agent.id,
+      sessionId: agent.sessionId,
+      tag: tags.get(agent.sessionId) ?? "#?",
+      name: agent.name?.trim() || agent.id,
+      cwd: agent.cwd,
+      status: statuses.get(agent.sessionId) ?? "done",
+      startedAt: agent.startedAt,
+      isAlive: typeof agent.pid === "number",
+    }));
 }
 
 // ログは `claude logs` ではなくセッションの会話JSONLから読む（src/lib/transcript.ts）。
