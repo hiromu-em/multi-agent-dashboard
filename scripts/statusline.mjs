@@ -11,7 +11,9 @@
 // 設定例（.claude/settings.json）。`args` は使えないので1つの文字列で書く:
 //   "statusLine": { "type": "command", "command": "node scripts/statusline.mjs" }
 
+import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +42,63 @@ function contextColor(percentage) {
   if (percentage >= 80) return RED;
   if (percentage >= 50) return AMBER;
   return GREEN;
+}
+
+/**
+ * もともと設定されていたステータスライン。
+ *
+ * `statusLine` を上書きすると、それまで使っていた表示は消えてしまう。
+ * ユーザー設定に別のコマンドがあれば、それを実行して結果をそのまま使い、
+ * 宛先だけを足す。自前で作り直すと、元の表示との差が事故になる。
+ */
+function baseCommand() {
+  try {
+    const path = join(homedir(), ".claude", "settings.json");
+    const command = JSON.parse(readFileSync(path, "utf8"))?.statusLine?.command;
+    if (typeof command !== "string" || !command.trim()) return null;
+
+    // 自分自身を指していたら呼ばない（無限に入れ子になる）。
+    if (command.includes("statusline.mjs")) return null;
+
+    // `~` はシェルによっては展開されないので、こちらで置き換える。
+    return command.replace(/(^|\s)~(?=[/\\])/g, `$1${homedir().replace(/\\/g, "/")}`);
+  } catch {
+    return null;
+  }
+}
+
+/** もとのコマンドを同じ入力で走らせ、その出力を受け取る。 */
+function runBase(command, input) {
+  return new Promise((resolve) => {
+    let output = "";
+    let settled = false;
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        resolve(output.replace(/\s+$/, ""));
+      }
+    };
+
+    try {
+      const child = spawn(command, { shell: true });
+      // 応答が無くてもステータスラインを止めない。
+      const timer = setTimeout(() => {
+        child.kill();
+        done();
+      }, 2000);
+
+      child.stdout.on("data", (chunk) => (output += chunk));
+      child.on("error", done);
+      child.on("close", () => {
+        clearTimeout(timer);
+        done();
+      });
+      child.stdin.on("error", () => {});
+      child.stdin.end(input);
+    } catch {
+      done();
+    }
+  });
 }
 
 function readTarget() {
@@ -134,20 +193,28 @@ async function main() {
   const cwd = input?.workspace?.current_dir ?? input?.cwd ?? process.cwd();
   const parts = [];
 
-  // ラベルは暗く、値は色付き。何の数字なのかが一目で分かり、値だけが浮く。
-  const field = (label, color, value) => `${DIM}${label}:${RESET}${color}${value}${RESET}`;
+  // もとから設定されていた表示があれば、それをそのまま使う。
+  const command = baseCommand();
+  const base = command ? await runBase(command, raw) : "";
 
-  const model = input?.model?.display_name ?? input?.model?.id;
-  if (model) parts.push(field("model", BLUE, model));
+  if (base) {
+    parts.push(base);
+  } else {
+    // 無い場合だけ自前で組み立てる。ラベルは暗く、値は色付きにして値を浮かせる。
+    const field = (label, color, value) => `${DIM}${label}:${RESET}${color}${value}${RESET}`;
 
-  const context = contextInfo(input);
-  if (context) parts.push(field("ctx", contextColor(context.percentage), context.label));
+    const model = input?.model?.display_name ?? input?.model?.id;
+    if (model) parts.push(field("model", BLUE, model));
 
-  const path = shortenPath(cwd);
-  if (path) parts.push(field("dir", GRAY, path));
+    const context = contextInfo(input);
+    if (context) parts.push(field("ctx", contextColor(context.percentage), context.label));
 
-  const branch = branchName(input, cwd);
-  if (branch) parts.push(field("git", PURPLE, branch));
+    const path = shortenPath(cwd);
+    if (path) parts.push(field("dir", GRAY, path));
+
+    const branch = branchName(input, cwd);
+    if (branch) parts.push(field("git", PURPLE, branch));
+  }
 
   // 宛先は最後。ここだけ強い色にして、目に留まるようにする。
   const target = readTarget();
