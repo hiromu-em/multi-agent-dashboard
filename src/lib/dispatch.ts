@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { invalidateAgentCache, listAgents, type AgentLane } from "@/lib/agents-cli";
+import { logDispatch } from "@/lib/dispatch-log";
 
 const run = promisify(execFile);
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
@@ -132,15 +133,8 @@ const queue: QueuedInstruction[] = [];
 // 送信中のセッション。二重に `stop` → `--resume` を打たないための鍵。
 const sending = new Set<string>();
 
-// 直近の送信失敗。窓口は送信の完了を待たないので、ここに置いて画面から見せる。
-let lastError: string | null = null;
-
 export function queuedCount(): number {
   return queue.length;
-}
-
-export function lastDispatchError(): string | null {
-  return lastError;
 }
 
 /**
@@ -151,8 +145,18 @@ export function lastDispatchError(): string | null {
  * 同じIDで再開する。作業中のセッションをここへ渡してはいけない（作業が中断される）。
  */
 async function sendToSession(lane: AgentLane, body: string): Promise<void> {
-  if (lane.isAlive) {
-    await run(CLAUDE_BIN, ["stop", lane.id], { maxBuffer: 1024 * 1024 });
+  // 止める直前に状態を取り直す。
+  //
+  // 判断に使う一覧はキャッシュされている上、CLIが返す `state` 自体も
+  // 少し遅れる。その隙に相手が作業を始めていると、`stop` が作業を中断させる。
+  // 実際に、作業中のセッションへ送れてしまう場面を踏んだ。
+  invalidateAgentCache();
+  const fresh = (await listAgents()).find((item) => item.sessionId === lane.sessionId);
+  if (!fresh) throw new Error("宛先のセッションが見つかりません");
+  if (fresh.status === "running") throw new Error("宛先が作業中のため送信を取りやめました");
+
+  if (fresh.isAlive) {
+    await run(CLAUDE_BIN, ["stop", fresh.id], { maxBuffer: 1024 * 1024 });
   }
   await run(CLAUDE_BIN, ["--bg", "--resume", lane.sessionId, body], {
     maxBuffer: 4 * 1024 * 1024,
@@ -164,16 +168,23 @@ async function sendToSession(lane: AgentLane, body: string): Promise<void> {
  * 送信を待たずに返す。
  *
  * `claude.exe` の起動は数秒かかるので、窓口の入力をその間止めない。
- * 結果はレーンの表示に出るし、失敗は `lastError` から画面で見える。
+ * そのぶん結果は窓口に返らないので、成否は必ず記録に残す。
+ * 以前は直近の失敗を変数1つに持っていたが、次の送信が成功すると消えていた。
  */
 function sendInBackground(lane: AgentLane, body: string): void {
   sending.add(lane.sessionId);
   void sendToSession(lane, body)
     .then(() => {
-      lastError = null;
+      void logDispatch({ event: "delivered", tag: lane.tag, sessionId: lane.sessionId });
     })
     .catch((error) => {
-      lastError = `${lane.tag}: ${error instanceof Error ? error.message : String(error)}`;
+      void logDispatch({
+        event: "failed",
+        tag: lane.tag,
+        sessionId: lane.sessionId,
+        body,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     })
     .finally(() => {
       sending.delete(lane.sessionId);
@@ -195,14 +206,28 @@ export async function drainQueue(): Promise<void> {
     const lane = byId.get(item.sessionId);
 
     // 宛先が消えた指示は捨てる。届け先が無い。
+    // 窓口には「順番待ちにしました」と伝えてあるので、捨てたことを必ず残す。
     if (!lane) {
       queue.splice(queue.indexOf(item), 1);
+      void logDispatch({
+        event: "dropped",
+        tag: item.tag,
+        sessionId: item.sessionId,
+        body: item.body,
+        reason: "宛先のセッションが盤面から消えた",
+      });
       continue;
     }
 
     if (!canSendNow(lane, active)) continue;
 
     queue.splice(queue.indexOf(item), 1);
+    void logDispatch({
+      event: "sent",
+      tag: lane.tag,
+      sessionId: lane.sessionId,
+      body: item.body,
+    });
     sendInBackground(lane, item.body);
     active += 1;
   }
@@ -228,9 +253,11 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
 
   if (!canSendNow(lane, activeCount(lanes))) {
     queue.push({ tag: lane.tag, sessionId: lane.sessionId, body, queuedAt: Date.now() });
+    await logDispatch({ event: "queued", tag: lane.tag, sessionId: lane.sessionId, body });
     return `${lane.tag} は作業中のため順番待ちにしました`;
   }
 
+  await logDispatch({ event: "sent", tag: lane.tag, sessionId: lane.sessionId, body });
   sendInBackground(lane, body);
   return `${lane.tag} へ送りました`;
 }
@@ -254,7 +281,11 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
   const parsed = parsePrompt(prompt);
 
   if (parsed.kind === "clear") {
+    const previous = await currentTarget();
     await writeTarget(null);
+    if (previous) {
+      await logDispatch({ event: "cleared", tag: previous.tag, sessionId: previous.sessionId });
+    }
     return { block: true, message: "宛先を解除しました。以降は窓口のClaudeと会話します。" };
   }
 

@@ -9,6 +9,13 @@ const LANE_COUNT_OPTIONS = [3, 4, 5, 8];
 const AGENTS_POLL_MS = 4000;
 const LOGS_POLL_MS = 5000;
 
+interface DispatchProblem {
+  at: string;
+  event: "failed" | "dropped";
+  tag: string;
+  reason?: string;
+}
+
 interface ApiAgent {
   id: string;
   sessionId: string;
@@ -35,6 +42,8 @@ export default function DashboardPage() {
   const [seen, setSeen] = useState<Record<string, LaneStatus>>({});
   const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
   const [queued, setQueued] = useState(0);
+  // 届かなかった指示。送信は裏で走るので、ここに出さないと誰も気づけない。
+  const [problems, setProblems] = useState<DispatchProblem[]>([]);
 
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
@@ -70,6 +79,7 @@ export default function DashboardPage() {
       const json = await res.json();
       setTargetSessionId(json?.target?.sessionId ?? null);
       setQueued(json?.queued ?? 0);
+      setProblems(json?.problems ?? []);
     } catch {
       // 表示だけの情報なので、取れなければ前回のままにする。
     }
@@ -255,6 +265,17 @@ export default function DashboardPage() {
             {queued > 0 && <span className="ml-2 text-[#fbbf24]">順番待ち {queued} 件</span>}
             {loadError && <span className="ml-2 text-[#f87171]">{loadError}</span>}
           </div>
+          {problems.length > 0 && (
+            <div className="mt-1 font-mono text-[11px] text-[#f87171]">
+              届かなかった指示 {problems.length} 件：
+              {problems.map((problem) => (
+                <span key={`${problem.at}-${problem.tag}`} className="ml-2">
+                  {problem.tag}
+                  {problem.event === "dropped" ? "（宛先が消えた）" : "（送信失敗）"}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className="mr-0.5 text-[11px] text-[#6f7580]">レーン数</span>

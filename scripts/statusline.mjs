@@ -11,15 +11,21 @@
 //   "statusLine": { "type": "command", "command": "node", "args": ["scripts/statusline.mjs"] }
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// 宛先ファイルはこのスクリプトから見た位置で決める。
+// 窓口セッションがどのディレクトリで動いていても同じ場所を読むため
+// （窓口はダッシュボードのリポジトリの外に居ることが多い）。
+const PROJECT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const DIM = "[2m";
 const ORANGE = "[38;5;208m";
 const RESET = "[0m";
 
-function readTarget(projectDir) {
+function readTarget() {
   try {
-    const raw = readFileSync(join(projectDir, ".logs", "target.json"), "utf8");
+    const raw = readFileSync(join(PROJECT_DIR, ".logs", "target.json"), "utf8");
     const target = JSON.parse(raw);
     if (typeof target?.tag === "string") return target;
   } catch {
@@ -39,14 +45,8 @@ async function main() {
     // 標準入力が読めなくても、環境変数から場所を決められる。
   }
 
-  const projectDir =
-    process.env.CLAUDE_PROJECT_DIR ??
-    input?.workspace?.project_dir ??
-    input?.cwd ??
-    process.cwd();
-
   const branch = input?.gitBranch ?? input?.workspace?.git_branch ?? "";
-  const target = readTarget(projectDir);
+  const target = readTarget();
 
   const parts = [];
   if (target) {

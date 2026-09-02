@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { currentTarget, lastDispatchError, queuedCount, routePrompt } from "@/lib/dispatch";
+import { currentTarget, queuedCount, routePrompt } from "@/lib/dispatch";
+import { readDispatchLog, recentProblems } from "@/lib/dispatch-log";
 
 // 窓口CLIの `UserPromptSubmit` フックから叩かれる。
 // フックは中身を判断せず、入力をそのまま渡して結果を受け取るだけの薄い管。
@@ -23,15 +24,22 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** 現在の宛先。ダッシュボードの強調表示に使う。 */
-export async function GET() {
+/**
+ * 現在の宛先と、直近の取りこぼし。
+ * `?log=1` を付けると配送の記録そのものを返す。
+ */
+export async function GET(req: NextRequest) {
   try {
+    if (req.nextUrl.searchParams.get("log")) {
+      return NextResponse.json({ records: await readDispatchLog(100) });
+    }
+
     return NextResponse.json({
       target: await currentTarget(),
       queued: queuedCount(),
-      error: lastDispatchError(),
+      problems: await recentProblems(),
     });
   } catch {
-    return NextResponse.json({ target: null, queued: 0 });
+    return NextResponse.json({ target: null, queued: 0, problems: [] });
   }
 }
