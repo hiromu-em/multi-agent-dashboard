@@ -20,7 +20,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `claude agents --json` / `claude stop` / `git diff` をAPI化して接続済み。ログは `claude logs` ではなく会話JSONLから読む（後述）
 - ログはセッションの会話JSONLから読み、発言・ツール実行・エラーを分けて表示する
 - 窓口CLIの `#` 指示をフックで横取りしてセッションへ配送する（対話待ちレーンへの返信もこれで行う）
-- 未実装: ログの永続化（`.logs/`）と通知
+- 配送の記録を `.logs/dispatch.jsonl` に残し、届かなかった指示を画面に出す
+- 未実装: 通知（完了・確認待ち時の音・ブラウザ通知）
+
+会話ログ自体の永続化は不要。Claude Code が `~/.claude/projects/**/<sessionId>.jsonl` に書き出しており、`claude rm` しても残る。長期保存したいなら `cleanupPeriodDays` を設定する（コードの作業ではない）。
 
 ## 主要ファイル
 
