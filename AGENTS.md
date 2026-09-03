@@ -194,9 +194,36 @@ claude stop <id> → claude --bg --resume <sessionId> "本文"
 
 ### フックとステータスラインの設定
 
-`.claude/settings.json` に入れてある。**窓口セッションが別のディレクトリで動くなら、そちらの設定に置く必要がある**（このリポジトリの設定はこのディレクトリで動くセッションにしか効かない）。
+**設定はリポジトリの中に置かない。窓口の作業ディレクトリ側（このリポジトリの親）に1つだけ置く。**
 
-止めたいときは `.claude/settings.json` の `hooks` を消す。ダッシュボードが起動していないときは、宛先を明示した `#B ...` だけがエラーで止まり、素の入力は素通しする（窓口のCLIが使えなくなる事態を避けるため）。
+```
+claude_project/.claude/settings.json   ← ここに1つだけ
+claude_project/multi-agent-dashboard/  ← リポジトリ。.claude/settings.json は置かない
+```
+
+理由が2つある。
+
+- **設定は親ディレクトリのものも読まれる。** リポジトリ内にも同じフックを置くと、リポジトリの中で動くセッションでは親とリポジトリの両方が登録され、**同じ指示が二重に配送されうる**
+- 窓口はリポジトリの外で動く。リポジトリ内の設定はそのディレクトリで動くセッションにしか効かない
+
+**パスは必ず絶対パスで書く。** 相対パスはセッションの作業ディレクトリを基準に解決されるので、窓口が別の場所へ移った瞬間に外れる。実際に `args: ["multi-agent-dashboard/scripts/route-prompt.mjs"]` と書いていたため、リポジトリの中で動くセッションでは `multi-agent-dashboard/multi-agent-dashboard/...` を探して毎プロンプト `MODULE_NOT_FOUND` で落ちていた。フックの失敗は入力のたびに画面へ出るので、これは黙って壊れるより悪い。
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "node",
+        "args": ["C:/.../multi-agent-dashboard/scripts/route-prompt.mjs"] } ] }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node \"C:/.../multi-agent-dashboard/scripts/statusline.mjs\""
+  }
+}
+```
+
+止めたいときはこのファイルの `hooks` を消す（ファイルごと消せばステータスラインも元に戻る）。ダッシュボードが起動していないときは、宛先を明示した `#B ...` だけがエラーで止まり、素の入力は素通しする（窓口のCLIが使えなくなる事態を避けるため）。
 
 ### 対話待ちの扱いについての注意
 
