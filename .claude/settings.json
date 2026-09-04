@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["C:/Users/hiromu46hiro/OneDrive/デスクトップ/claude_project/multi-agent-dashboard/scripts/route-prompt.mjs"]
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node \"C:/Users/hiromu46hiro/OneDrive/デスクトップ/claude_project/multi-agent-dashboard/scripts/statusline.mjs\""
+  }
+}
