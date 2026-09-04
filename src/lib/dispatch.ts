@@ -273,7 +273,10 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
   //
   // 配送先のエージェントが同じフックを持っていると、こちらが送った指示を
   // そのエージェントがまた振り分けてしまい、指示が延々と回り続ける。
-  // 窓口はボードに並ばない決まりなので、レーンに居る＝窓口ではない。
+  // 窓口はボードに並ばない決まりなので、レーンに居る＝窓口ではない
+  // （`claude --bg` で起動した窓口自身も `.logs/gateway.json` に登録して
+  // ここで弾く。登録し忘れると、この分岐に引っかかって窓口からの `#` 指示が
+  // 一切配送されず、素通りしているように見える）。
   if (sessionId && lanes.some((lane) => lane.sessionId === sessionId)) {
     return { block: false, message: "" };
   }

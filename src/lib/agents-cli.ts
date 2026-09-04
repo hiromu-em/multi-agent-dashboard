@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import type { LaneStatus } from "@/lib/dashboard-data";
 import { collectDiff } from "@/lib/agent-diff";
 import { registerSessions } from "@/lib/lane-registry";
+import { filterOutGateway } from "@/lib/gateway";
 
 const run = promisify(execFile);
 
@@ -92,7 +93,10 @@ async function fetchAgents(): Promise<AgentLane[]> {
   const parsed: unknown = JSON.parse(stdout);
   if (!Array.isArray(parsed)) return [];
 
-  const agents = (parsed as CliAgent[]).sort((a, b) => a.startedAt - b.startedAt);
+  // 窓口として登録されているセッションはここで弾く。タグも消費させない。
+  const agents = (await filterOutGateway(parsed as CliAgent[])).sort(
+    (a, b) => a.startedAt - b.startedAt,
+  );
   const statuses = new Map(agents.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
 
   // タグは並び順ではなくsessionIdに紐づく。指示の宛先として使うので動いてはいけない。
