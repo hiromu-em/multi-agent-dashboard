@@ -146,7 +146,7 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 - `statusLine` 設定（任意コマンドの出力をCLI下部に常時表示できる）で出す。**設定すると標準の表示は置き換わる**ので、`scripts/statusline.mjs` は**ユーザー設定（`~/.claude/settings.json`）に既にあるステータスラインのコマンドを実行し、その出力の末尾に宛先を足す**。自前で作り直すと、それまで使っていた表示との差が事故になる。既存のコマンドが無いときだけ `model:… | ctx:… | dir:… | git:…` を自前で組み立てる。
 
 **宛先だけはラベルを付けず矢印にする**（他と同じ見た目にすると埋もれる。見落とすと誤爆する箇所なので区別する）
-- **`statusLine` は `args` を受け付けない**（スキーマは `type` / `command` / `padding` / `refreshInterval` / `hideVimModeIndicator`）。`"command": "node scripts/statusline.mjs"` のように1つの文字列で書く。フック側は `args` を使える
+- **`statusLine` は `args` を受け付けない**（スキーマは `type` / `command` / `padding` / `refreshInterval` / `hideVimModeIndicator`）。`"command": "node \"C:/.../scripts/statusline.mjs\""` のように1つの文字列で書く（パスは絶対パスにする。後述）。フック側は `args` を使える
 - ステータスラインに渡る内容は `context_window`（`used_percentage` など）・`model.display_name`・`workspace.current_dir` を含む。版で変わるので、スクリプトは初回の入力を `.logs/statusline-sample.json` に1度だけ残す
 - 宛先ファイルはスクリプト自身の位置から辿る。**窓口はダッシュボードのリポジトリの外で動くことが多い**ため、セッションの作業ディレクトリを基準にしてはいけない
 - ダッシュボード側でも現在の宛先レーンを強調する
