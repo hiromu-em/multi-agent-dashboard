@@ -93,8 +93,15 @@ async function fetchAgents(): Promise<AgentLane[]> {
   const parsed: unknown = JSON.parse(stdout);
   if (!Array.isArray(parsed)) return [];
 
+  // セッションの作成・削除が短時間に重なると、`claude agents --json` が
+  // 同じ id を持つ行を過渡的に2件返すことがある。id はReactのkeyにも
+  // API（/api/agents/[id]/...）の識別子にも使うので、ここで一意にしておく。
+  // 同じidが複数あれば後勝ち（より新しい行のほうがstartedAt等が正しい）。
+  const deduped = new Map<string, CliAgent>();
+  for (const agent of parsed as CliAgent[]) deduped.set(agent.id, agent);
+
   // 窓口として登録されているセッションはここで弾く。タグも消費させない。
-  const agents = (await filterOutGateway(parsed as CliAgent[])).sort(
+  const agents = (await filterOutGateway([...deduped.values()])).sort(
     (a, b) => a.startedAt - b.startedAt,
   );
   const statuses = new Map(agents.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
