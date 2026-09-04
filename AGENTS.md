@@ -45,7 +45,6 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/app/api/agents/[id]/logs/route.ts` | 会話取得（GET）。`?session=<uuid>` を取る |
 | `src/app/api/agents/[id]/diff/route.ts` | 作業ディレクトリの変更（GET） |
 | `src/app/api/agents/[id]/stop/route.ts` | セッション停止（POST） |
-| `src/app/api/agents/[id]/stream/route.ts` | SSE配信のスタブ（未実装。JSONLの更新通知に使う想定） |
 
 ## 設計上の決定（変更する前に必ず読むこと）
 
@@ -58,7 +57,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **ボードのサイズは全レーン共通の固定値**（通常720px幅、フォーカス時980px幅）。高さは画面の残り領域いっぱいに自動で伸びる。縦スクロールは出さない
 - **ログは常に最新（最下部）を表示する。** 新着で自動追従し、ユーザーが上にスクロールしている間は追従を止めて「最新へ」ボタンを出す
 - **Killは本物のセッションを止める。** 実際のユーザーのセッションが並ぶので、確認ダイアログを外さないこと
-- **複数行の一括指示に対応する予定**（未実装）。`#` で始まる行を新しい指示の開始とみなし、次の `#` 行または入力末尾までをその宛先への本文として扱い、並列でディスパッチする
+- **複数行の一括指示に対応している**（`src/lib/dispatch.ts` の `parsePrompt`）。`#` で始まる行を新しい指示の開始とみなし、次の `#` 行または入力末尾までをその宛先への本文として扱い、並列でディスパッチする
 
 ## Claude Code CLI との接続
 
@@ -124,6 +123,8 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 - 出すのは「窓口の指示」「エージェントの発言」「ツール実行」「失敗したツール結果」の4種類。思考（`thinking`）と成功したツール結果は出さない。`isSidechain` はサブエージェント内部のやり取りなので除外する
 
 **方式B（バックエンドが `claude -p --output-format stream-json` を spawn する案）は採用しない。** あれはバックエンドがセッションの所有者になる設計で、`claude --bg` で起動したセッションを外から監視する今の形と噛み合わない。構造化ログという目的はJSONL追尾で達成済み。
+
+**SSE配信のエンドポイントも置かない。** `src/app/api/agents/[id]/stream/route.ts` にスタブを置いていたが、どこからも呼ばれないまま残っていたので消した。配信すべき stdout を持っているのはバックエンドではなくCLIなので、このスタブを埋める作業は方式Bを作ることと同じになる。会話はJSONLのポーリング（5秒）で足りている。
 
 ### 宛先は固定式（スティッキー）
 

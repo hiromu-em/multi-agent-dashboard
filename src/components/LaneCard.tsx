@@ -298,9 +298,9 @@ export default function LaneCard({
           className="shrink-0 border-t px-3.5 py-2.5 text-[11.5px] leading-relaxed text-[#fde68a]"
           style={{ borderColor: "#2a2410", background: "#171307" }}
         >
-          このセッションは入力待ちです。返信の送信はまだ未実装のため、
-          <span className="font-mono"> claude attach {lane.id} </span>
-          で開いて応答してください。
+          このセッションは返事を待っています。窓口のCLIで
+          <span className="font-mono"> {lane.tag} 返事の内容 </span>
+          と打つと届きます。
         </div>
       )}
 
