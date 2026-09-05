@@ -101,21 +101,14 @@ async function fetchAgents(): Promise<AgentLane[]> {
   for (const agent of parsed as CliAgent[]) deduped.set(agent.id, agent);
 
   // 窓口として登録されているセッションはここで弾く。タグも消費させない。
-  //
-  // 並び順は「実行中は左」「それ以外は開始時刻の昇順」の2段階。
-  // 実行中かどうかだけを見て並べ、実行中同士・非実行中同士はどちらも開始時刻順に保つ
-  // （安定ソートなので、実行中フラグが同じ2件の前後関係は開始時刻順のまま動かない）。
-  // これにより、完了したレーンは「新たに実行中になったレーンに追い越される」ことはあっても、
-  // 完了後にそれだけの理由で位置が動くことは無い。
-  const agents = (await filterOutGateway([...deduped.values()]))
-    .sort((a, b) => a.startedAt - b.startedAt)
-    .sort((a, b) => Number(b.state === "working") - Number(a.state === "working"));
-  const statuses = new Map(agents.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
+  const filtered = await filterOutGateway([...deduped.values()]);
+  const statuses = new Map(filtered.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
 
   // タグは並び順ではなくsessionIdに紐づく。指示の宛先として使うので動いてはいけない。
-  // 台帳は同時に、終わってから時間の経ったレーンを一覧から落とす。
-  const tags = await registerSessions(
-    agents.map((agent) => ({
+  // 台帳は同時に、終わってから時間の経ったレーンを一覧から落とし、endedAt（終了時刻）を返す。
+  // registerSessions 自身は内部でstartedAt順に並べ直すので、渡す順序は問わない。
+  const registry = await registerSessions(
+    filtered.map((agent) => ({
       sessionId: agent.sessionId,
       startedAt: agent.startedAt,
       // 対話待ち（waiting）は終了扱いにしない。返事を待っているレーンは消さない。
@@ -123,12 +116,32 @@ async function fetchAgents(): Promise<AgentLane[]> {
     })),
   );
 
+  // 並び順は「実行中」「対話待ち・完了系（完了は新しい順）」の優先度で決める。
+  // 開始時刻はどこにも使わない（最後のtiebreakとしてのみ残す）。
+  //
+  // 安定ソートを3回チェーンしているので、最後に適用したものが最優先になる：
+  //   1. startedAt昇順 … 完全な同着（同時刻に完了、など）だけのtiebreak
+  //   2. 完了時刻（endedAt）降順 … 新しく完了したレーンほど左（実行中・対話待ちはendedAtが
+  //      無いので、常にそれより左に来る）
+  //   3. 実行中フラグ … 実行中が最優先で一番左
+  const agents = filtered
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .sort((a, b) => {
+      const aEnded = registry.get(a.sessionId)?.endedAt;
+      const bEnded = registry.get(b.sessionId)?.endedAt;
+      if (aEnded === undefined && bEnded === undefined) return 0;
+      if (aEnded === undefined) return -1;
+      if (bEnded === undefined) return 1;
+      return bEnded - aEnded;
+    })
+    .sort((a, b) => Number(b.state === "working") - Number(a.state === "working"));
+
   const lanes = agents
-    .filter((agent) => tags.has(agent.sessionId))
+    .filter((agent) => registry.has(agent.sessionId))
     .map((agent) => ({
       id: agent.id,
       sessionId: agent.sessionId,
-      tag: tags.get(agent.sessionId) ?? "#?",
+      tag: registry.get(agent.sessionId)?.tag ?? "#?",
       name: agent.name?.trim() || agent.id,
       cwd: agent.cwd,
       status: statuses.get(agent.sessionId) ?? "done",

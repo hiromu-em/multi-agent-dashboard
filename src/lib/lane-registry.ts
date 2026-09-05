@@ -108,6 +108,12 @@ export interface RegisteredSession {
   isFinished: boolean;
 }
 
+export interface RegisteredLane {
+  tag: string;
+  /** 終わった状態を最初に見かけた時刻。まだ終わっていなければ undefined。 */
+  endedAt?: number;
+}
+
 /**
  * sessionId ごとに安定したタグを割り当て、表示すべきセッションだけを返す。
  *
@@ -120,13 +126,15 @@ export interface RegisteredSession {
  *
  * 終わってから `RETENTION_MS` を過ぎたセッションは戻り値に含めない。
  * 呼び出し側はこのMapに無いものをレーンから外す。
+ *
+ * `endedAt` も一緒に返す。並び順（完了が新しい順に並べる）に使うため。
  */
 export async function registerSessions(
   sessions: RegisteredSession[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, RegisteredLane>> {
   const store = await load();
   const now = Date.now();
-  const assigned = new Map<string, string>();
+  const assigned = new Map<string, RegisteredLane>();
 
   // タグごとに「最後に見かけた時刻」を出す。同じタグを過去に複数のセッションが
   // 使っていることがあるので、最も新しいものを採る。
@@ -175,7 +183,7 @@ export async function registerSessions(
     record.lastSeen = now;
     tagLastSeen.set(record.tag, now);
     taken.add(record.tag);
-    assigned.set(session.sessionId, record.tag);
+    assigned.set(session.sessionId, { tag: record.tag, endedAt: record.endedAt });
   }
 
   // 残りにタグを配る。古いセッションから順に配るので、並びとタグは概ね一致する。
@@ -184,12 +192,9 @@ export async function registerSessions(
     const tag = nextFreeTag(taken, tagLastSeen);
     taken.add(tag);
     tagLastSeen.set(tag, now);
-    store[session.sessionId] = {
-      tag,
-      lastSeen: now,
-      endedAt: session.isFinished ? now : undefined,
-    };
-    assigned.set(session.sessionId, tag);
+    const endedAt = session.isFinished ? now : undefined;
+    store[session.sessionId] = { tag, lastSeen: now, endedAt };
+    assigned.set(session.sessionId, { tag, endedAt });
     structuralChange = true;
   }
 
