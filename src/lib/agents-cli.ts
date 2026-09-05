@@ -101,9 +101,15 @@ async function fetchAgents(): Promise<AgentLane[]> {
   for (const agent of parsed as CliAgent[]) deduped.set(agent.id, agent);
 
   // 窓口として登録されているセッションはここで弾く。タグも消費させない。
-  const agents = (await filterOutGateway([...deduped.values()])).sort(
-    (a, b) => a.startedAt - b.startedAt,
-  );
+  //
+  // 並び順は「実行中は左」「それ以外は開始時刻の昇順」の2段階。
+  // 実行中かどうかだけを見て並べ、実行中同士・非実行中同士はどちらも開始時刻順に保つ
+  // （安定ソートなので、実行中フラグが同じ2件の前後関係は開始時刻順のまま動かない）。
+  // これにより、完了したレーンは「新たに実行中になったレーンに追い越される」ことはあっても、
+  // 完了後にそれだけの理由で位置が動くことは無い。
+  const agents = (await filterOutGateway([...deduped.values()]))
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .sort((a, b) => Number(b.state === "working") - Number(a.state === "working"));
   const statuses = new Map(agents.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
 
   // タグは並び順ではなくsessionIdに紐づく。指示の宛先として使うので動いてはいけない。
