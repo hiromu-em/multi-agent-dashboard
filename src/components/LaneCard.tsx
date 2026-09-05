@@ -266,7 +266,7 @@ export default function LaneCard({
           ref={logRef}
           onScroll={handleLogScroll}
           className="dc-scroll flex-1 p-3.5 font-mono"
-          style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 16.5 : 16 }}
+          style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 15.5 : 15 }}
         >
           {lane.entries.length > 0 ? (
             lane.entries.map((entry) => <TranscriptRow key={entry.key} entry={entry} />)
