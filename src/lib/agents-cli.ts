@@ -121,9 +121,11 @@ async function fetchAgents(): Promise<AgentLane[]> {
   //
   // 安定ソートを3回チェーンしているので、最後に適用したものが最優先になる：
   //   1. startedAt昇順 … 完全な同着だけのtiebreak
-  //   2. 終了時刻（endedAt）降順 … 同じ優先度グループの中では、新しく終わった
-  //      （完了／エラー・停止）レーンほど左（実行中・対話待ちはendedAtが無いので、
-  //      このキーだけでは③に上書きされるまでの間 undefined 側＝左寄りに来る）
+  //   2. 終了時刻（endedAt）昇順 … 同じ優先度グループの中では、先に終わった
+  //      （完了／エラー・停止）レーンほど左。新しく終わったレーンはグループの
+  //      右端に追加されるだけで、既存の完了レーンを追い越して割り込むことはない
+  //      （実行中・対話待ちはendedAtが無いので、このキーだけでは③に上書きされる
+  //      まえの間 undefined 側＝左寄りに来る）
   //   3. 状態グループの優先度（低いほど左）
   const STATUS_PRIORITY: Record<LaneStatus, number> = {
     done: 0,
@@ -140,7 +142,7 @@ async function fetchAgents(): Promise<AgentLane[]> {
       if (aEnded === undefined && bEnded === undefined) return 0;
       if (aEnded === undefined) return -1;
       if (bEnded === undefined) return 1;
-      return bEnded - aEnded;
+      return aEnded - bEnded;
     })
     .sort((a, b) => {
       const aPriority = STATUS_PRIORITY[statuses.get(a.sessionId) ?? "done"];
