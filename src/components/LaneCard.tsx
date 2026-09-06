@@ -175,8 +175,11 @@ function ReplyBox({
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // 質問文に列挙があればボタン化する。拾えなければ自由入力欄だけになる。
-  const options = useMemo(() => extractOptions(question), [question]);
+  // 選択肢のボタン化は対話待ち（本当に質問されている）ときだけ。
+  // 完了・エラーのレーンは最後の発言が普通の報告文であることが多く、その中の
+  // Markdown箇条書き（`- 項目`）まで選択肢として拾ってしまうと、答え終わった
+  // 完了報告が「まだ選べる質問」に見えてしまう。
+  const options = useMemo(() => (urgent ? extractOptions(question) : []), [question, urgent]);
 
   async function send(body: string) {
     const trimmed = body.trim();
