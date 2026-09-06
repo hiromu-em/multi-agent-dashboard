@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
 import type { TranscriptEntry } from "@/lib/transcript";
+import { parseInlineMarkdown } from "@/lib/markdown";
 
 // 「最下部にいる」と判定する余白(px)。これより下端に近ければ追従を続ける。
 const TAIL_THRESHOLD = 48;
@@ -50,6 +51,42 @@ function diffLineStyle(line: string): CSSProperties {
   };
 }
 
+// インラインMarkdown（**太字** `コード` *斜体*）だけをReact要素に変換する。
+// 生のHTMLタグは対象外（テキストとしてそのまま出す）。src/lib/markdown.ts 参照。
+function InlineMarkdown({ text }: { text: string }) {
+  return (
+    <>
+      {parseInlineMarkdown(text).map((token, i) => {
+        switch (token.kind) {
+          case "bold":
+            return (
+              <strong key={i} className="font-semibold text-inherit">
+                {token.value}
+              </strong>
+            );
+          case "italic":
+            return (
+              <em key={i} className="italic">
+                {token.value}
+              </em>
+            );
+          case "code":
+            return (
+              <code
+                key={i}
+                className="rounded bg-black/30 px-1 py-0.5 font-mono text-[0.9em]"
+              >
+                {token.value}
+              </code>
+            );
+          default:
+            return <span key={i}>{token.value}</span>;
+        }
+      })}
+    </>
+  );
+}
+
 // 会話1件の表示。窓口の指示・エージェントの発言・ツール実行・エラーを見分けられるようにする。
 function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   if (entry.role === "tool") {
@@ -89,7 +126,7 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
           }`,
         }}
       >
-        {entry.text}
+        <InlineMarkdown text={entry.text} />
       </div>
     </div>
   );
