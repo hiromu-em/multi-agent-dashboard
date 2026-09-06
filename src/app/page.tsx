@@ -30,6 +30,8 @@ interface ApiAgent {
 export default function DashboardPage() {
   const [laneCount, setLaneCountState] = useState(4);
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  // ヘッダーを畳んでレーンの表示領域を広げられるようにする。
+  const [headerHidden, setHeaderHidden] = useState(false);
   const [agents, setAgents] = useState<ApiAgent[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
@@ -242,6 +244,20 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#0a0b0d] text-[#e6e8eb]">
+      {headerHidden ? (
+        <div className="flex shrink-0 items-center justify-center border-b border-[#1d2024] bg-[#111317] py-1">
+          <button
+            type="button"
+            onClick={() => setHeaderHidden(false)}
+            title="ヘッダーを表示"
+            className="cursor-pointer rounded-md px-3 py-0.5 text-[#6f7580] hover:text-[#aeb2b8]"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 15 12 9 18 15" />
+            </svg>
+          </button>
+        </div>
+      ) : (
       <header className="flex shrink-0 items-center justify-between border-b border-[#1d2024] bg-[#111317] px-7 py-4">
         <div className="flex flex-col gap-0.5">
           <div className="flex items-center gap-2 text-[15px] font-semibold text-[#e6e8eb]">
@@ -297,8 +313,19 @@ export default function DashboardPage() {
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => setHeaderHidden(true)}
+            title="ヘッダーを隠す"
+            className="ml-1 cursor-pointer rounded-md px-1.5 py-1 text-[#6f7580] hover:text-[#aeb2b8]"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
         </div>
       </header>
+      )}
 
       {isFocusMode && (
         <div className="flex shrink-0 items-center gap-2 px-7 pt-3">
