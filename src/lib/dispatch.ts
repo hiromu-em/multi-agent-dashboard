@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { invalidateAgentCache, listAgents, type AgentLane } from "@/lib/agents-cli";
+import { describeExecError, invalidateAgentCache, listAgents, type AgentLane } from "@/lib/agents-cli";
 import { logDispatch } from "@/lib/dispatch-log";
 
 const run = promisify(execFile);
@@ -106,6 +106,32 @@ async function writeTarget(target: DispatchTarget | null): Promise<void> {
   }
 }
 
+/**
+ * `listAgents()`（=`claude agents --json --all`）を一切呼ばずに、この入力が
+ * 宛先付きだったかを判定する。
+ *
+ * `routePrompt` が `listAgents()` の失敗そのもので落ちたときのフォールバック専用。
+ * `currentTarget()` は内部で `listAgents()` を呼ぶため、まさに壊れている経路に
+ * 再び依存してしまい使えない。`.logs/target.json` を直接読む。
+ *
+ * `null` なら宛先なしの素の入力（横取りしない）。それ以外は
+ * 「宛先付きなら黙って窓口へ流さず必ず止める」という設計方針の対象。
+ */
+export async function resolveAddressee(
+  prompt: string,
+): Promise<{ tag: string; sessionId: string } | null> {
+  const parsed = parsePrompt(prompt);
+
+  if (parsed.kind === "clear") return { tag: "#", sessionId: "" };
+  if (parsed.kind === "addressed") {
+    return { tag: parsed.instructions.map((i) => i.tag).join(",") || "?", sessionId: "" };
+  }
+
+  // plain: 今の宛先（スティッキー）が設定されていれば、それも宛先付きと同じ扱いにする。
+  const target = await readTarget();
+  return target ? { tag: target.tag, sessionId: target.sessionId } : null;
+}
+
 /** ダッシュボードとステータスラインが読む、現在の宛先。 */
 export async function currentTarget(): Promise<DispatchTarget | null> {
   const target = await readTarget();
@@ -155,12 +181,16 @@ async function sendToSession(lane: AgentLane, body: string): Promise<void> {
   if (!fresh) throw new Error("宛先のセッションが見つかりません");
   if (fresh.status === "running") throw new Error("宛先が作業中のため送信を取りやめました");
 
-  if (fresh.isAlive) {
-    await run(CLAUDE_BIN, ["stop", fresh.id], { maxBuffer: 1024 * 1024 });
+  try {
+    if (fresh.isAlive) {
+      await run(CLAUDE_BIN, ["stop", fresh.id], { maxBuffer: 1024 * 1024 });
+    }
+    await run(CLAUDE_BIN, ["--bg", "--resume", lane.sessionId, body], {
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } catch (error) {
+    throw new Error(describeExecError(error));
   }
-  await run(CLAUDE_BIN, ["--bg", "--resume", lane.sessionId, body], {
-    maxBuffer: 4 * 1024 * 1024,
-  });
   invalidateAgentCache();
 }
 
