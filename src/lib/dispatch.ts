@@ -4,6 +4,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describeExecError, invalidateAgentCache, listAgents, type AgentLane } from "@/lib/agents-cli";
 import { logDispatch } from "@/lib/dispatch-log";
+import { isTagTaken, reserveTag } from "@/lib/lane-registry";
 
 const run = promisify(execFile);
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
@@ -292,6 +293,102 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
   return `${lane.tag} へ送りました`;
 }
 
+// 存在しない宛先を指されたとき、確認を挟んでから新しいセッションを作る。
+//
+// 打ち間違い（`#B` のつもりで `#K`）でセッションが生えるのは避けたいので、
+// 1回目は作らずに知らせるだけにして、同じ宛先へもう一度送られたときだけ作る。
+// 待ち合わせはプロセス内に持つ。数分で消えて構わない一時的な状態なので、
+// 順番待ちと同じくサーバー再起動で消えてよい。
+const pendingCreate = new Map<string, number>();
+const CONFIRM_WINDOW_MS = 5 * 60 * 1000;
+
+/** 新しいセッションのワークツリー名。`-w` はASCIIしか受け付けないのでタグから作る。 */
+function worktreeNameFor(tag: string): string {
+  return `lane-${tag.replace("#", "").toLowerCase()}`;
+}
+
+/** 盤面に出す名前。指示の1行目を短く使う。何も取れなければタグそのもの。 */
+function displayNameFor(tag: string, body: string): string {
+  const firstLine = body.split("\n").find((line) => line.trim())?.trim() ?? "";
+  if (!firstLine) return tag;
+  return firstLine.length > 24 ? `${firstLine.slice(0, 24)}…` : firstLine;
+}
+
+/**
+ * 指定のタグで新しいバックグラウンドセッションを起こし、指示をその最初の
+ * プロンプトとして渡す。作成そのものが配送を兼ねるので `deliver` は通さない。
+ *
+ * タグは `reserveTag` で先に台帳へ書く。そうしないと `nextFreeTag` が空きを
+ * 勝手に配り、`#K` へ送ったのに `#C` として盤面に出る。
+ */
+async function createLaneForTag(tag: string, body: string): Promise<string> {
+  const worktree = worktreeNameFor(tag);
+  const name = displayNameFor(tag, body);
+
+  let stdout: string;
+  try {
+    ({ stdout } = await run(CLAUDE_BIN, ["--bg", "-w", worktree, "-n", name, body], {
+      maxBuffer: 4 * 1024 * 1024,
+    }));
+  } catch (error) {
+    const detail = describeExecError(error);
+    await logDispatch({ event: "failed", tag, sessionId: "", body, reason: detail });
+    return `${tag} のセッションを作れませんでした: ${detail}`;
+  }
+
+  // `claude --bg` は短いIDだけを返す。sessionIdは一覧から引き直す。
+  const shortId = stdout.match(/([0-9a-f]{8})/i)?.[1];
+  invalidateAgentCache();
+  const agent = shortId ? (await listAgents()).find((lane) => lane.id === shortId) : undefined;
+
+  if (!shortId || !agent) {
+    // 起動はした。タグを予約できないので、台帳が空きタグを配ることになる。
+    await logDispatch({
+      event: "created",
+      tag,
+      sessionId: "",
+      body,
+      reason: `起動したがIDを解決できず、${tag} を予約できなかった`,
+    });
+    return `セッションは作りましたが ${tag} を割り当てられませんでした。盤面で実際のタグを確認してください。`;
+  }
+
+  await reserveTag(agent.sessionId, tag);
+  invalidateAgentCache();
+  await logDispatch({ event: "created", tag, sessionId: agent.sessionId, body });
+  return `${tag} を新しく作って指示を渡しました（${agent.id}）。`;
+}
+
+/**
+ * 存在しない宛先を指されたときの返事。1回目は確認、2回目で作成。
+ *
+ * 盤面に出ていなくても台帳がそのタグを持っていることがある（片付け済みの
+ * セッションはタグを持ったまま盤面から消えている）。その場合は作らない。
+ * 作ってしまうと、片付けたセッションが再開したときに同じタグが2つになる。
+ */
+async function handleUnknownTag(tag: string, body: string, lanes: AgentLane[]): Promise<string> {
+  const available = lanes.map((lane) => lane.tag).join(" ") || "（セッションがありません）";
+
+  if (await isTagTaken(tag)) {
+    pendingCreate.delete(tag);
+    return `${tag} は片付け済みのセッションが持っています。今ある宛先: ${available}`;
+  }
+
+  const askedAt = pendingCreate.get(tag);
+  if (askedAt !== undefined && Date.now() - askedAt <= CONFIRM_WINDOW_MS) {
+    pendingCreate.delete(tag);
+
+    // 作った直後から動き出すので、同時実行の上限はここでも見る。
+    if (activeCount(lanes) >= MAX_ACTIVE) {
+      return `${tag} は作れません。同時に走らせる上限（${MAX_ACTIVE}）に達しています。`;
+    }
+    return await createLaneForTag(tag, body);
+  }
+
+  pendingCreate.set(tag, Date.now());
+  return `${tag} という宛先はありません。今ある宛先: ${available} / もう一度 ${tag} へ送ると、新しいセッションを作ってそこへ渡します。`;
+}
+
 /**
  * ダッシュボードのレーンから直接返信する。
  *
@@ -372,11 +469,8 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
   for (const instruction of parsed.instructions) {
     const lane = lanes.find((item) => item.tag === instruction.tag);
     if (!lane) {
-      const available = lanes.map((item) => item.tag).join(" ") || "（セッションがありません）";
-      return {
-        block: true,
-        message: `${instruction.tag} という宛先はありません。今ある宛先: ${available}`,
-      };
+      // 確認を挟んでから作る。1回目は知らせるだけ、同じ宛先へもう一度送られたら作る。
+      return { block: true, message: await handleUnknownTag(instruction.tag, instruction.body, lanes) };
     }
     resolved.push({ lane, body: instruction.body });
   }

@@ -30,7 +30,9 @@ export type DispatchEvent =
   /** 順番待ちのまま宛先が消えたので捨てた */
   | "dropped"
   /** 宛先を解除した */
-  | "cleared";
+  | "cleared"
+  /** 存在しない宛先を指され、確認のうえ新しいセッションを作った */
+  | "created";
 
 export interface DispatchRecord {
   at: string;

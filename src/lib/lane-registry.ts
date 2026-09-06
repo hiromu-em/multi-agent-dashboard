@@ -248,3 +248,29 @@ export async function dismissSession(sessionId: string): Promise<boolean> {
   await save(store);
   return true;
 }
+
+/**
+ * そのタグを既にどこかのセッションが持っているか。
+ *
+ * `listAgents()` に出てくるレーンだけでは足りない。片付け済み（`dismissedAt`）の
+ * セッションは盤面に出ないがタグは持ったままで、再開すれば戻ってくる。
+ * 新しいセッションへタグを予約する前に、その持ち主とぶつからないか確かめる。
+ */
+export async function isTagTaken(tag: string): Promise<boolean> {
+  const store = await load();
+  return Object.values(store).some((record) => record.tag === tag);
+}
+
+/**
+ * 新しいセッションに、狙ったタグを先に割り当てておく。
+ *
+ * `registerSessions` は「台帳に記録のあるセッションはそのタグを維持し、記録の無い
+ * セッションにだけ `nextFreeTag` で空きを配る」という順序で動く。したがって、
+ * 一覧に現れる前にここで記録を作っておけば、そのセッションは狙ったタグで盤面に出る。
+ * 窓口が `#K` へ送って作られたセッションが `#C` になってしまわないように使う。
+ */
+export async function reserveTag(sessionId: string, tag: string): Promise<void> {
+  const store = await load();
+  store[sessionId] = { tag, lastSeen: Date.now() };
+  await save(store);
+}
