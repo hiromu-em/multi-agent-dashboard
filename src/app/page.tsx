@@ -9,6 +9,13 @@ const LANE_COUNT_OPTIONS = [3, 4, 5, 8];
 const AGENTS_POLL_MS = 4000;
 const LOGS_POLL_MS = 5000;
 
+/** 存在しない宛先を指されて、作るかどうかの返事を待っているもの。 */
+interface PendingCreate {
+  tag: string;
+  body: string;
+  at: number;
+}
+
 interface DispatchProblem {
   at: string;
   event: "failed" | "dropped";
@@ -46,6 +53,9 @@ export default function DashboardPage() {
   const [queued, setQueued] = useState(0);
   // 届かなかった指示。送信は裏で走るので、ここに出さないと誰も気づけない。
   const [problems, setProblems] = useState<DispatchProblem[]>([]);
+  // 存在しない宛先を指されて、作るかどうかの返事を待っているもの。
+  const [pending, setPending] = useState<PendingCreate[]>([]);
+  const [pendingBusy, setPendingBusy] = useState<string | null>(null);
 
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
@@ -82,10 +92,33 @@ export default function DashboardPage() {
       setTargetSessionId(json?.target?.sessionId ?? null);
       setQueued(json?.queued ?? 0);
       setProblems(json?.problems ?? []);
+      setPending(json?.pending ?? []);
     } catch {
       // 表示だけの情報なので、取れなければ前回のままにする。
     }
   }, []);
+
+  // 「作りますか？」への返事。窓口で `#K` と打つのと同じ保留を消化する。
+  const answerPending = useCallback(
+    async (tag: string, action: "create" | "reject") => {
+      setPendingBusy(tag);
+      try {
+        const res = await fetch("/api/dispatch/pending", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tag, action }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) setLoadError(json?.error ?? "作成に失敗しました");
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setPendingBusy(null);
+        await fetchTarget();
+      }
+    },
+    [fetchTarget],
+  );
 
   const fetchAgents = useCallback(async () => {
     try {
@@ -357,6 +390,44 @@ export default function DashboardPage() {
         </div>
       </header>
       )}
+
+      {/*
+        存在しない宛先を指されたときの確認。ヘッダーの外に置くのは、ヘッダーを
+        畳んでいても見えるようにするため。返事を待っている＝窓口の指示が宙に
+        浮いている状態なので、畳んだせいで気づけないと困る。
+      */}
+      {pending.map((item) => (
+        <div
+          key={item.tag}
+          className="flex shrink-0 items-center gap-3 border-b px-7 py-2.5"
+          style={{ borderColor: "#2a2410", background: "#171307" }}
+        >
+          <span className="shrink-0 font-mono text-xs font-bold text-[#fbbf24]">{item.tag}</span>
+          <span className="shrink-0 text-[12px] text-[#fde68a]">
+            という宛先はありません。作りますか？
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#8a8f98]">
+            {item.body}
+          </span>
+          <button
+            type="button"
+            disabled={pendingBusy === item.tag}
+            onClick={() => answerPending(item.tag, "create")}
+            className="shrink-0 cursor-pointer rounded-md border px-3 py-1 text-[12px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ borderColor: "#4a3f14", background: "rgba(251,191,36,0.14)", color: "#fbbf24" }}
+          >
+            実行
+          </button>
+          <button
+            type="button"
+            disabled={pendingBusy === item.tag}
+            onClick={() => answerPending(item.tag, "reject")}
+            className="shrink-0 cursor-pointer rounded-md border border-[#3a3d44] px-3 py-1 text-[12px] text-[#aeb2b8] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            拒否
+          </button>
+        </div>
+      ))}
 
       {isFocusMode && (
         <div className="flex shrink-0 items-center gap-2 px-7 pt-3">

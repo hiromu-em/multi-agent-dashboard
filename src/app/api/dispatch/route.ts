@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { currentTarget, queuedCount, resolveAddressee, routePrompt } from "@/lib/dispatch";
+import {
+  currentTarget,
+  pendingCreates,
+  queuedCount,
+  resolveAddressee,
+  routePrompt,
+} from "@/lib/dispatch";
 import { logDispatch, readDispatchLog, recentProblems } from "@/lib/dispatch-log";
 
 // 窓口CLIの `UserPromptSubmit` フックから叩かれる。
@@ -63,8 +69,9 @@ export async function GET(req: NextRequest) {
       target: await currentTarget(),
       queued: queuedCount(),
       problems: await recentProblems(),
+      pending: pendingCreates(),
     });
   } catch {
-    return NextResponse.json({ target: null, queued: 0, problems: [] });
+    return NextResponse.json({ target: null, queued: 0, problems: [], pending: [] });
   }
 }

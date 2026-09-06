@@ -76,6 +76,20 @@ export function parsePrompt(prompt: string): ParsedPrompt {
   return { kind: "addressed", instructions: instructions.filter((i) => i.body.trim()) };
 }
 
+/**
+ * 入力が `#K` のようなタグ1つだけなら、そのタグを返す。
+ *
+ * `parsePrompt` は本文の無い指示を落とすので、そこからは区別が付かない。
+ * 確認待ちの作成を数文字で実行できるようにするために、ここで拾い直す。
+ */
+function bareTagOf(prompt: string): string | null {
+  const lines = prompt.trim().split("\n").filter((line) => line.trim());
+  if (lines.length !== 1) return null;
+  const match = lines[0].trimEnd().match(TAG_LINE);
+  if (!match || (match[2] ?? "").trim()) return null;
+  return `#${match[1].toUpperCase()}`;
+}
+
 async function readTarget(): Promise<DispatchTarget | null> {
   try {
     const parsed: unknown = JSON.parse(await readFile(TARGET_FILE, "utf8"));
@@ -296,11 +310,71 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
 // 存在しない宛先を指されたとき、確認を挟んでから新しいセッションを作る。
 //
 // 打ち間違い（`#B` のつもりで `#K`）でセッションが生えるのは避けたいので、
-// 1回目は作らずに知らせるだけにして、同じ宛先へもう一度送られたときだけ作る。
+// 1回目は作らずに知らせるだけにする。**本文はここで預かる**ので、確認のときに
+// もう一度打ち直す必要は無い。確認する道は2つ：盤面の「実行」ボタンと、窓口で
+// `#K` とタグだけ打つこと。どちらも同じ保留を消化する。
+//
 // 待ち合わせはプロセス内に持つ。数分で消えて構わない一時的な状態なので、
 // 順番待ちと同じくサーバー再起動で消えてよい。
-const pendingCreate = new Map<string, number>();
+interface PendingCreate {
+  body: string;
+  at: number;
+}
+
+const pendingCreate = new Map<string, PendingCreate>();
 const CONFIRM_WINDOW_MS = 5 * 60 * 1000;
+
+/** 期限切れの保留を落とす。読むたびに掃除するので専用のタイマーは持たない。 */
+function prunePending(): void {
+  const now = Date.now();
+  for (const [tag, pending] of pendingCreate) {
+    if (now - pending.at > CONFIRM_WINDOW_MS) pendingCreate.delete(tag);
+  }
+}
+
+export interface PendingCreateView {
+  tag: string;
+  body: string;
+  at: number;
+}
+
+/** 盤面に出す、確認待ちの作成。 */
+export function pendingCreates(): PendingCreateView[] {
+  prunePending();
+  return [...pendingCreate.entries()].map(([tag, pending]) => ({
+    tag,
+    body: pending.body,
+    at: pending.at,
+  }));
+}
+
+/** 盤面の「拒否」。預かっていた本文ごと捨てる。 */
+export function rejectCreate(tag: string): boolean {
+  return pendingCreate.delete(tag);
+}
+
+/**
+ * 盤面の「実行」。預かっていた本文でセッションを作る。
+ * 窓口で `#K` とタグだけ打った場合もここへ来る。
+ */
+export async function confirmCreate(tag: string): Promise<{ ok: boolean; message: string }> {
+  prunePending();
+  const pending = pendingCreate.get(tag);
+  if (!pending) return { ok: false, message: `${tag} の確認待ちはありません（期限切れの可能性）。` };
+
+  pendingCreate.delete(tag);
+
+  // 作った直後から動き出すので、同時実行の上限はここでも見る。
+  const lanes = await listAgents();
+  if (activeCount(lanes) >= MAX_ACTIVE) {
+    return {
+      ok: false,
+      message: `${tag} は作れません。同時に走らせる上限（${MAX_ACTIVE}）に達しています。`,
+    };
+  }
+
+  return { ok: true, message: await createLaneForTag(tag, pending.body) };
+}
 
 /** 新しいセッションのワークツリー名。`-w` はASCIIしか受け付けないのでタグから作る。 */
 function worktreeNameFor(tag: string): string {
@@ -360,7 +434,9 @@ async function createLaneForTag(tag: string, body: string): Promise<string> {
 }
 
 /**
- * 存在しない宛先を指されたときの返事。1回目は確認、2回目で作成。
+ * 存在しない宛先を指されたときの返事。作らずに本文を預かって確認を求める。
+ *
+ * 本文つきでもう一度送られた場合も（打ち直しても届くように）そのまま作成する。
  *
  * 盤面に出ていなくても台帳がそのタグを持っていることがある（片付け済みの
  * セッションはタグを持ったまま盤面から消えている）。その場合は作らない。
@@ -374,19 +450,15 @@ async function handleUnknownTag(tag: string, body: string, lanes: AgentLane[]): 
     return `${tag} は片付け済みのセッションが持っています。今ある宛先: ${available}`;
   }
 
-  const askedAt = pendingCreate.get(tag);
-  if (askedAt !== undefined && Date.now() - askedAt <= CONFIRM_WINDOW_MS) {
-    pendingCreate.delete(tag);
-
-    // 作った直後から動き出すので、同時実行の上限はここでも見る。
-    if (activeCount(lanes) >= MAX_ACTIVE) {
-      return `${tag} は作れません。同時に走らせる上限（${MAX_ACTIVE}）に達しています。`;
-    }
-    return await createLaneForTag(tag, body);
+  prunePending();
+  if (pendingCreate.has(tag)) {
+    // 本文つきで打ち直された。今回の本文で作る。
+    pendingCreate.set(tag, { body, at: Date.now() });
+    return (await confirmCreate(tag)).message;
   }
 
-  pendingCreate.set(tag, Date.now());
-  return `${tag} という宛先はありません。今ある宛先: ${available} / もう一度 ${tag} へ送ると、新しいセッションを作ってそこへ渡します。`;
+  pendingCreate.set(tag, { body, at: Date.now() });
+  return `${tag} という宛先はありません。今ある宛先: ${available} / 盤面の「実行」を押すか、もう一度 ${tag} と打つと、この指示のまま新しいセッションを作ります（${tag} だけでよく、本文は預かっています）。`;
 }
 
 /**
@@ -443,7 +515,13 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     if (previous) {
       await logDispatch({ event: "cleared", tag: previous.tag, sessionId: previous.sessionId });
     }
-    return { block: true, message: "宛先を解除しました。以降は窓口のClaudeと会話します。" };
+
+    // `#` は「今のやりとりを取り消す」合図として使うので、確認待ちの作成も一緒に捨てる。
+    const dropped = pendingCreates().map((p) => p.tag);
+    for (const tag of dropped) rejectCreate(tag);
+    const note = dropped.length > 0 ? ` ${dropped.join(" ")} の作成も取り消しました。` : "";
+
+    return { block: true, message: `宛先を解除しました。以降は窓口のClaudeと会話します。${note}` };
   }
 
   if (parsed.kind === "plain") {
@@ -460,6 +538,12 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
   }
 
   if (parsed.instructions.length === 0) {
+    // 本文の無い `#K` は、確認待ちがあれば「実行」の合図として扱う。
+    // 打ち直さずに数文字で確認できるようにするためで、盤面の「実行」ボタンと同じ経路。
+    const bareTag = bareTagOf(prompt);
+    if (bareTag && pendingCreates().some((p) => p.tag === bareTag)) {
+      return { block: true, message: (await confirmCreate(bareTag)).message };
+    }
     return { block: true, message: "宛先だけで本文がありません。" };
   }
 
