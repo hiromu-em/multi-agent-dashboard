@@ -36,3 +36,15 @@ export function parseInlineMarkdown(text: string): MarkdownToken[] {
   if (lastIndex < text.length) tokens.push({ kind: "text", value: text.slice(lastIndex) });
   return tokens;
 }
+
+// 行頭の `- ` `* ` は箇条書きの記号なので `・ ` に変換する。
+// `**太字**` の一部である `*` と区別するため、直後にもう1文字 `*` が続く場合は対象外にする。
+const BULLET_LINE = /^([ \t]*)[-*](?!\*)[ \t]+/;
+
+/** 行頭の箇条書き記号を `・` に変換する。インラインの解釈（parseInlineMarkdown）の前に通す。 */
+export function convertBulletMarkers(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(BULLET_LINE, (_match, indent: string) => `${indent}・ `))
+    .join("\n");
+}

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
 import type { TranscriptEntry } from "@/lib/transcript";
-import { parseInlineMarkdown } from "@/lib/markdown";
+import { convertBulletMarkers, parseInlineMarkdown } from "@/lib/markdown";
 
 // 「最下部にいる」と判定する余白(px)。これより下端に近ければ追従を続ける。
 const TAIL_THRESHOLD = 48;
@@ -56,7 +56,7 @@ function diffLineStyle(line: string): CSSProperties {
 function InlineMarkdown({ text }: { text: string }) {
   return (
     <>
-      {parseInlineMarkdown(text).map((token, i) => {
+      {parseInlineMarkdown(convertBulletMarkers(text)).map((token, i) => {
         switch (token.kind) {
           case "bold":
             return (
