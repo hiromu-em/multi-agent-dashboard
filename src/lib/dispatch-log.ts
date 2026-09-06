@@ -111,16 +111,26 @@ const PROBLEM_EVENTS = new Set<DispatchEvent>(["failed", "dropped"]);
  *
  * 窓口は送信の完了を待たないので、これを画面に出さないと
  * 「送ったのに動いていない」理由が誰にも分からない。
+ *
+ * ただし、同じ宛先へその後に届いた記録（`delivered`）があれば、その失敗は
+ * もう解消済みとみなして外す。再送して届いた指示がいつまでも「送信失敗」の
+ * ままだと、直っているのに壊れているように見えて紛らわしい。
  */
 export async function recentProblems(limit = 5): Promise<DispatchRecord[]> {
   const since = Date.now() - PROBLEM_WINDOW_MS;
-  const records = await readDispatchLog(200);
+  const records = await readDispatchLog(200); // 新しい順
 
   return records
-    .filter((record) => {
+    .filter((record, index) => {
       if (!PROBLEM_EVENTS.has(record.event)) return false;
       const at = Date.parse(record.at);
-      return Number.isFinite(at) && at >= since;
+      if (!Number.isFinite(at) || at < since) return false;
+
+      // 新しい順なので、自分より前（配列の手前側）が時間的には後。
+      // そこに同じ宛先への delivered があれば解消済み。
+      return !records
+        .slice(0, index)
+        .some((later) => later.event === "delivered" && later.sessionId === record.sessionId);
     })
     .slice(0, limit);
 }
