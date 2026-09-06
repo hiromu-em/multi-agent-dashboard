@@ -48,6 +48,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/app/api/agents/[id]/reply/route.ts` | レーンへの返信（POST）。`src/lib/dispatch.ts` の `replyFromBoard` |
 | `src/app/api/agents/[id]/dismiss/route.ts` | 終わったレーンを盤面から片付ける（POST）。`src/lib/lane-registry.ts` の `dismissSession` |
 | `src/lib/reply-options.ts` | 質問文から選択肢らしい行を抜き出す（返信欄のボタン用） |
+| `src/lib/live-question.ts` | 対話待ちのレーンに限り `claude logs` から保留中の`AskUserQuestion`を読む |
 
 ## 設計上の決定（変更する前に必ず読むこと）
 
@@ -138,6 +139,10 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 **`AskUserQuestion`（対話的な選択肢提示ツール）だけは例外的に「エージェントの発言」として組み立て直す**（`formatAskUserQuestion`）。他のツールと同じ扱い（`role: "tool"`、`toolDetail` が拾う `description`/`command`/… のどれとも形が合わない）のままだと、「▸ AskUserQuestion」とだけ出て質問文も選択肢も画面から一切見えなかった。組み立て直した文章は選択肢を行頭 `1.` の通し番号にするので、盤面の返信欄の選択肢抽出（`src/lib/reply-options.ts` の `extractOptions`）にもそのまま乗る。説明文（`description`）は次行にインデントで置き、番号記号が無いので抽出には拾われない——ボタンを押したときに送る文面が説明まで含んで長くなるのを防ぐため。
 
 **`AskUserQuestion`で止まっているレーンに返信欄から答えても、1回目はそのまま届かない。** 保留中のツール呼び出しに対して `claude --bg --resume` で素のテキストを送ると、CLIは「ユーザーがこの質問を拒否して、聞き直してほしいと言っている」という定型の却下として扱い、エージェントは選んだはずの答えを無視して聞き直す。2回目に送った同じ答えは（このときには保留中のツール呼び出しが無くなっているので）普通の返信として通る。実際に検証して確認した挙動で、CLI側の仕様なのでダッシュボード側では直せない。
+
+**`AskUserQuestion`が保留中の間、その質問自体はJSONLにまだ書き込まれない。** 実際に検証すると、対話ピッカーが `claude logs` の画面には表示されているのに、対応するJSONLの行は30秒待っても増えなかった。回答されて初めて（却下されてでも）記録される。つまり `formatAskUserQuestion` による表示は、**すでに解決した質問を後から見る**ことはできても、**今まさに保留中の質問の中身をJSONLだけで見る**ことはできない——これは今の設計（会話はJSONLから読む）の構造的な死角。
+
+これに対応するため、対話待ち（`state: "blocked"`）のレーンに限って例外的に `claude logs <id>` を読む（`src/lib/live-question.ts` の `readLiveQuestion`、`src/app/api/agents/[id]/logs/route.ts` から呼ぶ）。汎用のANSI端末エミュレータは作らず、AskUserQuestionの対話ピッカー1つだけを画面末尾から狙い撃ちで解釈する（見出しのチェックボックス行 `☐`/`☑` からフッター `Enter to select / to navigate` までの間を、行頭 `❯ N.` の選択肢として拾う。「Type something.」「Chat about this」はウィジェットが常に足す定型なので除外）。解釈できなければ諦めて何も足さない。これは「`claude logs` は使わない」という上の決定への例外で、対象は保留中のAskUserQuestionの中身を拾うことだけに絞ってある——JSONLの代わりに全面的に使うわけではない。
 
 **方式B（バックエンドが `claude -p --output-format stream-json` を spawn する案）は採用しない。** あれはバックエンドがセッションの所有者になる設計で、`claude --bg` で起動したセッションを外から監視する今の形と噛み合わない。構造化ログという目的はJSONL追尾で達成済み。
 
