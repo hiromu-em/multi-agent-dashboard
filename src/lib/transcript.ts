@@ -163,6 +163,57 @@ function toolDetail(input: unknown): string {
   return "";
 }
 
+/**
+ * `AskUserQuestion`（対話的な選択肢提示ツール）の入力を読める文章に組み立てる。
+ *
+ * `toolDetail` が拾うキー（description/command/…）と形が合わないため、これまでは
+ * 「▸ AskUserQuestion」とだけ出て質問文も選択肢も画面から見えなかった。
+ * ここで作る文章は `role: "agent"` として扱うので、盤面の返信欄が使っている
+ * 選択肢抽出（`src/lib/reply-options.ts` の `extractOptions`、行頭の `1.` を拾う）
+ * にもそのまま乗る。番号は質問をまたいで通し番号にする（複数の質問が同時に来ても
+ * 選択肢の抽出ロジックが1つのフラットな箇条書きとして扱えるようにするため）。
+ *
+ * 説明文（description）は選択肢の次行にインデント付きで置く。行頭に番号記号が
+ * 無いので `extractOptions` には拾われず、ボタンを押したときに送る文面は
+ * ラベルだけになる——説明まで送り返すと本人の発言として不自然になるため。
+ */
+function formatAskUserQuestion(input: unknown): string {
+  const record = input as { questions?: unknown } | undefined;
+  const questions = Array.isArray(record?.questions) ? record.questions : [];
+  if (questions.length === 0) return "";
+
+  let counter = 0;
+  const blocks: string[] = [];
+
+  for (const q of questions) {
+    const question = q as {
+      question?: unknown;
+      header?: unknown;
+      multiSelect?: unknown;
+      options?: unknown;
+    };
+    const questionText = typeof question.question === "string" ? question.question : "";
+    if (!questionText) continue;
+
+    const header = typeof question.header === "string" ? question.header : "";
+    const suffix = question.multiSelect ? "（複数選択可）" : "";
+    const title = header ? `【${header}】${questionText}${suffix}` : `${questionText}${suffix}`;
+
+    const options = Array.isArray(question.options) ? question.options : [];
+    const lines = options.map((opt) => {
+      const option = opt as { label?: unknown; description?: unknown };
+      counter += 1;
+      const label = typeof option.label === "string" && option.label.trim() ? option.label : `選択肢${counter}`;
+      const description = typeof option.description === "string" ? option.description.trim() : "";
+      return description ? `${counter}. ${label}\n   ${description}` : `${counter}. ${label}`;
+    });
+
+    blocks.push([title, ...lines].join("\n"));
+  }
+
+  return blocks.join("\n\n");
+}
+
 // 窓口の発言には system-reminder が紛れることがある。表示には要らないので落とす。
 const REMINDER_PATTERN = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
@@ -229,6 +280,18 @@ export async function readTranscript(
         }
 
         if (c.type === "tool_use") {
+          // AskUserQuestionは質問文と選択肢が `input` の中に構造化されて入っているだけで、
+          // toolDetailが拾うキー（description/command/…）とは形が違う。素通りさせると
+          // 「▸ AskUserQuestion」とだけ出て中身が見えないので、role: "agent" の発言として
+          // 組み立て直す（返信欄の選択肢抽出にもそのまま乗る）。
+          if (c.name === "AskUserQuestion") {
+            const text = formatAskUserQuestion(c.input);
+            if (text) {
+              entries.push({ key: `${uuid}-${i}`, role: "agent", time, text });
+              return;
+            }
+          }
+
           entries.push({
             key: `${uuid}-${i}`,
             role: "tool",
