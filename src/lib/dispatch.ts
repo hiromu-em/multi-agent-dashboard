@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { invalidateAgentCache, listAgents, type AgentLane } from "@/lib/agents-cli";
+import { describeExecError, invalidateAgentCache, listAgents, type AgentLane } from "@/lib/agents-cli";
 import { logDispatch } from "@/lib/dispatch-log";
 
 const run = promisify(execFile);
@@ -155,12 +155,16 @@ async function sendToSession(lane: AgentLane, body: string): Promise<void> {
   if (!fresh) throw new Error("宛先のセッションが見つかりません");
   if (fresh.status === "running") throw new Error("宛先が作業中のため送信を取りやめました");
 
-  if (fresh.isAlive) {
-    await run(CLAUDE_BIN, ["stop", fresh.id], { maxBuffer: 1024 * 1024 });
+  try {
+    if (fresh.isAlive) {
+      await run(CLAUDE_BIN, ["stop", fresh.id], { maxBuffer: 1024 * 1024 });
+    }
+    await run(CLAUDE_BIN, ["--bg", "--resume", lane.sessionId, body], {
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } catch (error) {
+    throw new Error(describeExecError(error));
   }
-  await run(CLAUDE_BIN, ["--bg", "--resume", lane.sessionId, body], {
-    maxBuffer: 4 * 1024 * 1024,
-  });
   invalidateAgentCache();
 }
 
