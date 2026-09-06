@@ -263,12 +263,17 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
 }
 
 /**
- * ダッシュボードの対話待ちレーンから直接返信する。
+ * ダッシュボードのレーンから直接返信する。
  *
- * 指示はすべて窓口のCLIから出す設計だが、対話待ち（人の返事を待っている状態）
- * への返信に限っては例外を認める。宛先はUIで選んだレーンそのものなので、
- * `#B` のようなタグ解決は要らない。それ以外の用途（新しい指示を好きな宛先に送る）
- * には使わない——それは引き続き窓口のCLI経由でしか出来ない。
+ * 指示はすべて窓口のCLIから出す設計だが、盤面に見えているレーンへの返信に限っては
+ * 例外を認める。宛先はUIで選んだレーンそのものなので、`#B` のようなタグ解決は
+ * 要らない。それ以外の用途（新しい指示を好きな宛先に送る）には使わない——それは
+ * 引き続き窓口のCLI経由でしか出来ない。
+ *
+ * 当初は `waiting`（CLIの `blocked`）のレーンだけに許していたが、質問を返して
+ * ターンを終えたセッションをCLIは数秒で `done` として返すため、返信欄が出ても
+ * 押す前に消え、押せてもここで弾かれていた。実行中のレーンの扱いは deliver に
+ * 任せる（止めずに順番待ちへ積む）。
  */
 export async function replyFromBoard(
   id: string,
@@ -280,10 +285,6 @@ export async function replyFromBoard(
   const lanes = await listAgents();
   const lane = lanes.find((item) => item.id === id);
   if (!lane) return { ok: false, error: "セッションが見つかりません" };
-  if (lane.status !== "waiting") {
-    return { ok: false, error: "対話待ちのレーンにのみ返信できます" };
-  }
-
   const message = await deliver(lane, trimmed);
   return { ok: true, message };
 }

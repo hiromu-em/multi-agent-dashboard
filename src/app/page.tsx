@@ -215,7 +215,7 @@ export default function DashboardPage() {
     }
   }
 
-  // 対話待ちレーンへの返信。ダッシュボードの入力欄からの唯一の送信経路。
+  // レーンへの返信。ダッシュボードの入力欄からの唯一の送信経路。
   async function replyToLane(id: string, body: string): Promise<{ ok: boolean; message: string }> {
     try {
       const res = await fetch(`/api/agents/${id}/reply`, {

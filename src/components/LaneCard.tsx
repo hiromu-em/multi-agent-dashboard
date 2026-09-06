@@ -33,7 +33,7 @@ interface LaneCardProps {
   onToggleDiff: (id: string) => void;
   onToggleFocus: (id: string) => void;
   onKill: (id: string) => void;
-  /** 対話待ちレーンへの返信。成功可否とメッセージを返す。 */
+  /** レーンへの返信。成功可否とメッセージを返す。 */
   onReply: (id: string, body: string) => Promise<{ ok: boolean; message: string }>;
 }
 
@@ -137,23 +137,32 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
 }
 
 /**
- * 対話待ちレーンへの返信欄。表示時にスライドイン・フェードインする。
+ * 手の空いたレーンへの返信欄。表示時にスライドイン・フェードインする。
  *
  * ダッシュボードに指示入力欄は置かない設計の唯一の例外。宛先は既にこのレーンに
  * 固定されているので `#B` のようなタグ指定は要らない。新しい指示を好きな宛先に
  * 送る用途にはならない（それは引き続き窓口のCLI経由）。
+ *
+ * 当初は「対話待ち（CLIの `blocked`）のときだけ出す」形にしていたが、質問を返して
+ * ターンを終えたセッションをCLIは数秒で `done` として返すため、返信欄が出ても
+ * すぐ消えて選べなかった。実行中以外のすべてのレーンに出す。
  */
-function WaitingReplyBox({
+function ReplyBox({
   id,
   tag,
+  laneStatus,
   question,
   onReply,
 }: {
   id: string;
   tag: string;
+  laneStatus: LaneStatus;
   question: string;
   onReply: (id: string, body: string) => Promise<{ ok: boolean; message: string }>;
 }) {
+  // 対話待ちのレーンだけ琥珀色にする。手が空いているだけのレーンまで同じ色にすると、
+  // 本当に返事を待っているレーンが盤面に埋もれる。
+  const urgent = laneStatus === "waiting";
   const [mounted, setMounted] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -189,8 +198,8 @@ function WaitingReplyBox({
     <div
       className="shrink-0 overflow-hidden border-t"
       style={{
-        borderColor: "#2a2410",
-        background: "#171307",
+        borderColor: urgent ? "#2a2410" : "#23262b",
+        background: urgent ? "#171307" : "#111317",
         transition: "max-height 220ms ease, opacity 220ms ease, transform 220ms ease",
         maxHeight: mounted ? 280 : 0,
         opacity: mounted ? 1 : 0,
@@ -198,7 +207,9 @@ function WaitingReplyBox({
       }}
     >
       <div className="px-3.5 py-2.5">
-        <div className="mb-1.5 text-[11px] text-[#fde68a]">{tag} が返事を待っています</div>
+        <div className="mb-1.5 text-[11px]" style={{ color: urgent ? "#fde68a" : "#8a8f98" }}>
+          {urgent ? `${tag} が返事を待っています` : `${tag} へ返信する`}
+        </div>
 
         {options.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
@@ -209,7 +220,11 @@ function WaitingReplyBox({
                 disabled={sending}
                 onClick={() => send(opt.text)}
                 className="cursor-pointer rounded-md border px-2.5 py-1 text-left text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ borderColor: "#4a3f14", background: "rgba(251,191,36,0.10)", color: "#fbbf24" }}
+                style={{
+                  borderColor: urgent ? "#4a3f14" : "#3a3d44",
+                  background: urgent ? "rgba(251,191,36,0.10)" : "rgba(255,255,255,0.04)",
+                  color: urgent ? "#fbbf24" : "#c3c7ce",
+                }}
               >
                 {opt.label}. {opt.text.length > 32 ? `${opt.text.slice(0, 32)}…` : opt.text}
               </button>
@@ -224,16 +239,24 @@ function WaitingReplyBox({
             onKeyDown={handleKeyDown}
             disabled={sending}
             rows={1}
-            placeholder="返事を入力（Enterで送信 / Shift+Enterで改行）"
+            placeholder={
+              urgent
+                ? "返事を入力（Enterで送信 / Shift+Enterで改行）"
+                : "返信を入力（Enterで送信 / Shift+Enterで改行）"
+            }
             className="min-h-[34px] flex-1 resize-none rounded-md border bg-[#0d0f12] px-2.5 py-1.5 text-[12px] text-[#e6e8eb] outline-none placeholder:text-[#5c6067]"
-            style={{ borderColor: "#3a3220" }}
+            style={{ borderColor: urgent ? "#3a3220" : "#2a2d33" }}
           />
           <button
             type="button"
             disabled={sending || !text.trim()}
             onClick={() => send(text)}
             className="flex h-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border px-3 text-[12px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-            style={{ borderColor: "#4a3f14", background: "rgba(251,191,36,0.14)", color: "#fbbf24" }}
+            style={{
+              borderColor: urgent ? "#4a3f14" : "#3a3d44",
+              background: urgent ? "rgba(251,191,36,0.14)" : "rgba(255,255,255,0.06)",
+              color: urgent ? "#fbbf24" : "#e6e8eb",
+            }}
           >
             送信
           </button>
@@ -254,7 +277,8 @@ export default function LaneCard({
   onReply,
 }: LaneCardProps) {
   const meta = STATUS_META[lane.status];
-  const isWaiting = lane.status === "waiting";
+  // 実行中のレーンへ送ると `stop` が走って作業が中断されるので、そこだけ出さない。
+  const canReply = lane.status !== "running";
   const isKilled = lane.status === "killed";
   const isError = lane.status === "error";
   const diffLines = lane.diff ? lane.diff.split("\n") : [];
@@ -444,10 +468,11 @@ export default function LaneCard({
         )}
       </div>
 
-      {isWaiting && (
-        <WaitingReplyBox
+      {canReply && (
+        <ReplyBox
           id={lane.id}
           tag={lane.tag}
+          laneStatus={lane.status}
           question={[...lane.entries].reverse().find((e) => e.role === "agent")?.text ?? ""}
           onReply={onReply}
         />

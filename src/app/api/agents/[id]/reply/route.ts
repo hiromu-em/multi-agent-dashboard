@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { replyFromBoard } from "@/lib/dispatch";
 
-// ダッシュボードの対話待ちレーンから直接返信する（例外的にここだけ入力欄を持つ）。
+// ダッシュボードのレーンから直接返信する（例外的にここだけ入力欄を持つ）。
 // 詳細は src/lib/dispatch.ts の replyFromBoard 参照。
 
 export const dynamic = "force-dynamic";
