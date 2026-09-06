@@ -28,11 +28,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const entries = await readTranscript(id, session ?? undefined);
 
-    // 対話待ち（AskUserQuestionが保留中）の間は、その質問自体がJSONLにまだ
-    // 現れないことがある（回答されて初めて記録される）。その間だけ、例外的に
-    // `claude logs` から今の質問を補って末尾に足す（src/lib/live-question.ts）。
+    // 対話待ち（AskUserQuestionが保留中）の間、その質問自体がJSONLに書き込まれる
+    // までにはっきりした遅延がある（回答前でも数十秒〜のことがある）。その間だけ、
+    // 例外的に `claude logs` から今の質問を補って末尾に足す（live-question.ts）。
+    //
+    // 末尾が既に role: "agent" の発言なら、JSONL側にもう質問が書き込まれた後
+    // （＝この補完が追いついた後）とみなしてスキップする。スキップしないと、
+    // 同じ質問がJSONL由来のものと補完のもので2回並んでしまう。
     const lanes = await listAgents();
-    if (lanes.find((a) => a.id === id)?.status === "waiting") {
+    if (
+      lanes.find((a) => a.id === id)?.status === "waiting" &&
+      entries.at(-1)?.role !== "agent"
+    ) {
       const liveQuestion = await readLiveQuestion(id);
       if (liveQuestion) {
         entries.push({ key: `${id}-live-question`, role: "agent", time: "", text: liveQuestion });
