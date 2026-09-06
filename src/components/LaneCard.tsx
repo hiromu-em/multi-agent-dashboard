@@ -74,7 +74,8 @@ function InlineMarkdown({ text }: { text: string }) {
             return (
               <code
                 key={i}
-                className="rounded bg-black/30 px-1 py-0.5 font-mono text-[0.9em]"
+                className="rounded px-1 py-0.5 font-mono text-[0.9em]"
+                style={{ background: "rgba(196,181,253,0.16)", color: "#c4b5fd" }}
               >
                 {token.value}
               </code>
