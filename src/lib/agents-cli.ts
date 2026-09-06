@@ -60,6 +60,23 @@ function toLaneStatus(agent: CliAgent): LaneStatus {
   }
 }
 
+// `claude` CLI呼び出しの失敗をstdout/stderrも含めて1行にする。
+//
+// execFileの失敗は既定だと `error.message` が "Command failed: <cmd>"
+// だけになりがちで、実際の原因（クラッシュ時の出力）が `error.stdout` /
+// `error.stderr` に残っていても捨てられていた。ここで拾って残しておかないと、
+// 次に同じ失敗が起きたときも「Command failed」としか分からず切り分けられない。
+export function describeExecError(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error) {
+    const err = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    const parts = [String(err.message)];
+    if (err.stdout) parts.push(`stdout: ${err.stdout.slice(0, 2000)}`);
+    if (err.stderr) parts.push(`stderr: ${err.stderr.slice(0, 2000)}`);
+    return parts.join(" | ");
+  }
+  return String(error);
+}
+
 // 直近の取得結果を短時間だけ使い回す。
 //
 // Diffや指示の配送はIDから作業ディレクトリやsessionIdを引くために一覧を要求するが、
@@ -86,9 +103,14 @@ export async function listAgents(): Promise<AgentLane[]> {
 async function fetchAgents(): Promise<AgentLane[]> {
   // `--all` が無いと、終了したセッション（failed / 停止済み）が一覧から消える。
   // 失敗したレーンこそ見落としてはいけないので、終わったものも含めて取得する。
-  const { stdout } = await run(CLAUDE_BIN, ["agents", "--json", "--all"], {
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  let stdout: string;
+  try {
+    ({ stdout } = await run(CLAUDE_BIN, ["agents", "--json", "--all"], {
+      maxBuffer: 8 * 1024 * 1024,
+    }));
+  } catch (error) {
+    throw new Error(describeExecError(error));
+  }
 
   const parsed: unknown = JSON.parse(stdout);
   if (!Array.isArray(parsed)) return [];
@@ -144,7 +166,11 @@ export function invalidateAgentCache(): void {
 
 /** `claude stop <id>` でバックグラウンドセッションを停止する（会話は保持される）。 */
 export async function stopAgent(id: string): Promise<void> {
-  await run(CLAUDE_BIN, ["stop", id], { maxBuffer: 1024 * 1024 });
+  try {
+    await run(CLAUDE_BIN, ["stop", id], { maxBuffer: 1024 * 1024 });
+  } catch (error) {
+    throw new Error(describeExecError(error));
+  }
 }
 
 /**
