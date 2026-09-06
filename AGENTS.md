@@ -46,6 +46,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/app/api/agents/[id]/diff/route.ts` | 作業ディレクトリの変更（GET） |
 | `src/app/api/agents/[id]/stop/route.ts` | セッション停止（POST） |
 | `src/app/api/agents/[id]/reply/route.ts` | レーンへの返信（POST）。`src/lib/dispatch.ts` の `replyFromBoard` |
+| `src/app/api/agents/[id]/dismiss/route.ts` | 終わったレーンを盤面から片付ける（POST）。`src/lib/lane-registry.ts` の `dismissSession` |
 | `src/lib/reply-options.ts` | 質問文から選択肢らしい行を抜き出す（返信欄のボタン用） |
 
 ## 設計上の決定（変更する前に必ず読むこと）
@@ -94,9 +95,11 @@ CLIが返す `state` は `working` `blocked` `done` `failed` `stopped` の5種�
 
 **`claude agents --json` は既定では終了したセッションを返さない。** そのため `--all` を付けている。これが無いと `failed` のレーンが赤く出るどころか一覧から消え、一番見落としてはいけないものが一番静かに消える。
 
-`--all` は過去の完了分も全部返すので、終わったレーンは**終了から3時間で盤面から落とす**（`src/lib/lane-registry.ts` の `RETENTION_MS`）。終了時刻はCLIが返さないので、終端状態を最初に観測した時刻を台帳に記録して起点にしている。
+**終わったレーンは時間では消さない。** 以前は終了から3時間で盤面から落としていた（`RETENTION_MS`）が、廃止した。「対話待ち（`blocked`）は打ち切りの対象外」という例外を付けてあったものの、**`blocked` はほとんど観測できない**（質問文を返してターンを終えたセッションを、CLIは数秒で `done` にする）ので実際には効いておらず、**返事を待っているレーンが3時間で黙って消えていた**。消えると質問も、タグの割り当ても失われる。時間で消す限り、放置した質問ほど静かに消えるという向きは変えられない。
 
-**対話待ち（`blocked`）は打ち切りの対象外。** 人の応答を待っている状態なので、消すと返事待ちのレーンに気づけなくなる。
+代わりに**手で片付ける**（各レーンの「×」ボタン → `POST /api/agents/[id]/dismiss` → `src/lib/lane-registry.ts` の `dismissSession`）。片付けるのは表示だけで、セッションは止めない（Killとは別物）。台帳に `dismissedAt` を残し、そのセッションが再開したら記録を取り消して盤面に戻す。片付けボタンは終わったレーン（完了・エラー・停止済み）にだけ出す——実行中や対話待ちを消せると、監視の意味が無くなる。
+
+終了時刻（`endedAt`）の記録自体は残す。並び順に使うため。CLIは終了時刻を返さないので、終端状態を最初に観測した時刻を起点にしている。
 
 ### Diffは `git diff` だけでは足りない
 
@@ -199,7 +202,7 @@ claude stop <id> → claude --bg --resume <sessionId> "本文"
 | `dropped` | 順番待ちのまま宛先が消えたので捨てた |
 | `cleared` | 宛先を解除した |
 
-`failed` と `dropped` が「届かなかった指示」で、直近1時間ぶんをダッシュボードのヘッダーに赤く出す。これが無いと、順番待ちの宛先が3時間で盤面から落ちたときに指示が痕跡なく消える（窓口には「順番待ちにしました」と伝えた後で）。
+`failed` と `dropped` が「届かなかった指示」で、直近1時間ぶんをダッシュボードのヘッダーに赤く出す。これが無いと、順番待ちの宛先が盤面から消えたときに指示が痕跡なく消える（窓口には「順番待ちにしました」と伝えた後で）。
 
 会話JSONLには「そのセッションが何を受け取ったか」しか残らない。タグ・順番待ち・送信失敗は盤面側の事実なので、ここにしか残らない。
 

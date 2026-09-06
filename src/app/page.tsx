@@ -215,6 +215,21 @@ export default function DashboardPage() {
     }
   }
 
+  // 終わったレーンを盤面から片付ける。セッションは止めない（Killとは別物）。
+  async function dismissLane(id: string) {
+    try {
+      const res = await fetch(`/api/agents/${id}/dismiss`, { method: "POST" });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(json?.message ?? "片付けに失敗しました");
+      }
+      if (focusedId === id) setFocusedId(null);
+      await fetchAgents();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   // レーンへの返信。ダッシュボードの入力欄からの唯一の送信経路。
   async function replyToLane(id: string, body: string): Promise<{ ok: boolean; message: string }> {
     try {
@@ -399,6 +414,7 @@ export default function DashboardPage() {
               onToggleDiff={toggleDiff}
               onToggleFocus={toggleFocus}
               onKill={killLane}
+              onDismiss={dismissLane}
               onReply={replyToLane}
             />
           ))

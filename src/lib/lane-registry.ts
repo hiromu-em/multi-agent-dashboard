@@ -9,10 +9,16 @@ import { dirname, join } from "node:path";
 // `#C` 宛ての指示が別のセッションへ届く。だからsessionIdに紐づけて永続化する。
 const REGISTRY_FILE = join(process.cwd(), ".logs", "sessions.json");
 
-// 終わったレーンを盤面に残す時間。これを過ぎたら表示しない。
-// `claude agents --json --all` は完了済みも返すので、これが無いと
-// 過去のレーンが溜まって、生きているレーンを画面から押し出す。
-const RETENTION_MS = 3 * 60 * 60 * 1000;
+// 終わったレーンは時間では消さない。片付けるまで盤面に残す。
+//
+// 以前は終了から3時間で落としていたが、それだと**返事を待っているレーンが
+// 黙って消える**。エージェントが質問文を返してターンを終えた状態を、CLIは
+// 数秒で `done` として返す（`blocked` はほとんど観測できない）ので、
+// 「対話待ちは打ち切らない」という例外も実際には効いていなかった。
+// 3時間放置した質問は、レーンごと——タグの割り当てごと——消えていた。
+//
+// 代わりに手で片付ける（`dismissSession`）。片付けたレーンが再開したら
+// 記録を取り消して盤面に戻す。
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
@@ -31,8 +37,10 @@ interface SessionRecord {
   tag: string;
   /** 最後にセッション一覧で見かけた時刻。タグ再利用の判断に使う。 */
   lastSeen: number;
-  /** 終わった状態で最初に見かけた時刻。表示を打ち切る起点。 */
+  /** 終わった状態で最初に見かけた時刻。並び順に使う。 */
   endedAt?: number;
+  /** 盤面から片付けた時刻。入っている間は表示しない。 */
+  dismissedAt?: number;
 }
 
 type SessionStore = Record<string, SessionRecord>;
@@ -47,12 +55,18 @@ async function load(): Promise<SessionStore> {
     // 壊れた記録は捨てる。タグは作り直せるので落ちるより作り直すほうがよい。
     const store: SessionStore = {};
     for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const record = value as { tag?: unknown; lastSeen?: unknown; endedAt?: unknown };
+      const record = value as {
+        tag?: unknown;
+        lastSeen?: unknown;
+        endedAt?: unknown;
+        dismissedAt?: unknown;
+      };
       if (typeof record?.tag === "string" && typeof record?.lastSeen === "number") {
         store[sessionId] = {
           tag: record.tag,
           lastSeen: record.lastSeen,
           endedAt: typeof record.endedAt === "number" ? record.endedAt : undefined,
+          dismissedAt: typeof record.dismissedAt === "number" ? record.dismissedAt : undefined,
         };
       }
     }
@@ -124,8 +138,8 @@ export interface RegisteredLane {
  * 終了したセッションのタグは再利用する。ただし配る順序で間隔を稼ぐので、
  * 直前に終わったタグがすぐ次のセッションに渡ることはない。
  *
- * 終わってから `RETENTION_MS` を過ぎたセッションは戻り値に含めない。
- * 呼び出し側はこのMapに無いものをレーンから外す。
+ * 片付けた（`dismissSession`）セッションは戻り値に含めない。呼び出し側は
+ * このMapに無いものをレーンから外す。時間では落とさない。
  *
  * `endedAt` も一緒に返す。並び順（完了が新しい順に並べる）に使うため。
  */
@@ -158,6 +172,11 @@ export async function registerSessions(
         record.endedAt = undefined;
         structuralChange = true;
       }
+      // 片付けたレーンでも、返信などで動き出したなら盤面に戻す。
+      if (record?.dismissedAt !== undefined) {
+        record.dismissedAt = undefined;
+        structuralChange = true;
+      }
       visible.push(session);
       continue;
     }
@@ -169,8 +188,8 @@ export async function registerSessions(
       structuralChange = true;
     }
 
-    const endedAt = record?.endedAt ?? now;
-    if (now - endedAt <= RETENTION_MS) visible.push(session);
+    // 時間では落とさない。手で片付けたものだけ盤面から外す。
+    if (record?.dismissedAt === undefined) visible.push(session);
   }
 
   // 今この瞬間に使われているタグ。これ以外はすべて再利用の候補。
@@ -212,4 +231,20 @@ export async function registerSessions(
   }
 
   return assigned;
+}
+
+/**
+ * 終わったレーンを盤面から片付ける。セッション自体には触らない。
+ *
+ * 時間で自動的に消さなくなった代わりの手段。片付けてもタグの記録は残り、
+ * そのセッションが再開すれば `registerSessions` が記録を取り消して盤面に戻す。
+ */
+export async function dismissSession(sessionId: string): Promise<boolean> {
+  const store = await load();
+  const record = store[sessionId];
+  if (!record) return false;
+
+  record.dismissedAt = Date.now();
+  await save(store);
+  return true;
 }

@@ -33,6 +33,8 @@ interface LaneCardProps {
   onToggleDiff: (id: string) => void;
   onToggleFocus: (id: string) => void;
   onKill: (id: string) => void;
+  /** 終わったレーンを盤面から片付ける。セッションは止めない。 */
+  onDismiss: (id: string) => void;
   /** レーンへの返信。成功可否とメッセージを返す。 */
   onReply: (id: string, body: string) => Promise<{ ok: boolean; message: string }>;
 }
@@ -274,11 +276,14 @@ export default function LaneCard({
   onToggleDiff,
   onToggleFocus,
   onKill,
+  onDismiss,
   onReply,
 }: LaneCardProps) {
   const meta = STATUS_META[lane.status];
   // 実行中のレーンへ送ると `stop` が走って作業が中断されるので、そこだけ出さない。
   const canReply = lane.status !== "running";
+  // 終わったレーンだけ片付けられる。実行中・対話待ちは自分では消せない。
+  const canDismiss = lane.status === "done" || lane.status === "killed" || lane.status === "error";
   const isKilled = lane.status === "killed";
   const isError = lane.status === "error";
   const diffLines = lane.diff ? lane.diff.split("\n") : [];
@@ -398,6 +403,19 @@ export default function LaneCard({
               </svg>
             )}
           </button>
+          {canDismiss && (
+            <button
+              type="button"
+              title="盤面から片付ける（セッションは残る）"
+              onClick={() => onDismiss(lane.id)}
+              className="flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-md border border-[#23262b] text-[#8a8f98]"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
           <button
             type="button"
             title="停止 (claude stop)"

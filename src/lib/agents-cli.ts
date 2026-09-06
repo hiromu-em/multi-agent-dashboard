@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LaneStatus } from "@/lib/dashboard-data";
 import { collectDiff } from "@/lib/agent-diff";
-import { registerSessions } from "@/lib/lane-registry";
+import { dismissSession, registerSessions } from "@/lib/lane-registry";
 import { filterOutGateway } from "@/lib/gateway";
 
 const run = promisify(execFile);
@@ -196,6 +196,23 @@ export function invalidateAgentCache(): void {
 
 // ログは `claude logs` ではなくセッションの会話JSONLから読む（src/lib/transcript.ts）。
 // 端末描画を経由しないので、ANSI除去も \r の後始末も要らない。
+
+/**
+ * 終わったレーンを盤面から片付ける（「片付ける」ボタン）。
+ *
+ * セッションは止めも消しもしない。表示から外すだけなので、`claude attach <id>`
+ * でも、そのセッションが再開すれば盤面でも、そのまま続きを見られる。
+ */
+export async function dismissLane(id: string): Promise<boolean> {
+  const lanes = await listAgents();
+  const lane = lanes.find((item) => item.id === id);
+  if (!lane) return false;
+
+  const dismissed = await dismissSession(lane.sessionId);
+  // 次の取得で消えた状態を返すため、キャッシュを捨てる。
+  invalidateAgentCache();
+  return dismissed;
+}
 
 /** `claude stop <id>` でバックグラウンドセッションを停止する（会話は保持される）。 */
 export async function stopAgent(id: string): Promise<void> {
