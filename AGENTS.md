@@ -45,10 +45,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/app/api/agents/[id]/logs/route.ts` | 会話取得（GET）。`?session=<uuid>` を取る |
 | `src/app/api/agents/[id]/diff/route.ts` | 作業ディレクトリの変更（GET） |
 | `src/app/api/agents/[id]/stop/route.ts` | セッション停止（POST） |
+| `src/app/api/agents/[id]/reply/route.ts` | 対話待ちレーンへの返信（POST）。`src/lib/dispatch.ts` の `replyFromBoard` |
+| `src/lib/reply-options.ts` | 質問文から選択肢らしい行を抜き出す（対話待ちの返信欄のボタン用） |
 
 ## 設計上の決定（変更する前に必ず読むこと）
 
 - **ダッシュボードに指示入力欄は置かない。** 指示はすべて窓口のCLIから出す。中段にあった入力欄と送信ボタンは意図的に削除済みなので、復活させないこと
+
+  **唯一の例外は「対話待ち」レーンへの返信。** 各レーンの対話待ち表示（`LaneCard.tsx` の `WaitingReplyBox`）に返信欄を出す。宛先は既にそのレーンに固定されているのでタグ指定が要らず、`#B` のように別の宛先へ新しい指示を送る用途とは別物。エージェントの直近の発言に列挙（`1.` `A)` `・` など）があれば `src/lib/reply-options.ts` の `extractOptions` がボタン化し、それ以外は自由入力欄だけになる。送信は `POST /api/agents/[id]/reply` → `src/lib/dispatch.ts` の `replyFromBoard` で、対話待ち以外のレーンでは拒否する。窓口CLI経由の返信（`#タグ 本文`）も従来通り使える
 - **窓口セッション自身はボードにしない。** ボードになるのは、バックグラウンドで起動されたサブエージェントセッションだけ
 
   **窓口を `claude --bg` セッションとして使う場合は、`.logs/gateway.json` に自分のsessionIdを登録すること。** `claude agents --json --all` は「窓口かサブエージェントか」を区別しない。バックグラウンドで起動したセッションはすべて同じ形で並ぶので、コード側からは構造的に見分けが付かない。登録を忘れると2つとも起きる：ボードに窓口自身のレーンが並ぶ（本来ボードに並ばない前提が崩れる）、かつ配送ループ防止（「レーンに居る＝窓口ではない」の判定、`src/lib/dispatch.ts` の `routePrompt`）に引っかかって**窓口からの `#` 指示が一切配送されず、黙って窓口のClaudeへの普通の発言として流れる**。`.logs/gateway.json` は `{ "sessionIds": ["…"] }`（`src/lib/gateway.ts`）。窓口を切り替えたら古いIDを消し、新しいIDを足す

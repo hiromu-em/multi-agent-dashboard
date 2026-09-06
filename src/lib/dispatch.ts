@@ -263,6 +263,32 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
 }
 
 /**
+ * ダッシュボードの対話待ちレーンから直接返信する。
+ *
+ * 指示はすべて窓口のCLIから出す設計だが、対話待ち（人の返事を待っている状態）
+ * への返信に限っては例外を認める。宛先はUIで選んだレーンそのものなので、
+ * `#B` のようなタグ解決は要らない。それ以外の用途（新しい指示を好きな宛先に送る）
+ * には使わない——それは引き続き窓口のCLI経由でしか出来ない。
+ */
+export async function replyFromBoard(
+  id: string,
+  body: string,
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const trimmed = body.trim();
+  if (!trimmed) return { ok: false, error: "本文が空です" };
+
+  const lanes = await listAgents();
+  const lane = lanes.find((item) => item.id === id);
+  if (!lane) return { ok: false, error: "セッションが見つかりません" };
+  if (lane.status !== "waiting") {
+    return { ok: false, error: "対話待ちのレーンにのみ返信できます" };
+  }
+
+  const message = await deliver(lane, trimmed);
+  return { ok: true, message };
+}
+
+/**
  * 窓口の入力を振り分ける。窓口のCLIのフックから呼ばれる。
  * `block: false` を返した入力だけが窓口のClaudeに渡る。
  */

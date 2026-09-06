@@ -215,6 +215,22 @@ export default function DashboardPage() {
     }
   }
 
+  // 対話待ちレーンへの返信。ダッシュボードの入力欄からの唯一の送信経路。
+  async function replyToLane(id: string, body: string): Promise<{ ok: boolean; message: string }> {
+    try {
+      const res = await fetch(`/api/agents/${id}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, message: json?.error ?? "送信に失敗しました" };
+      return { ok: true, message: json?.message ?? "送信しました" };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   function setLaneCount(n: number) {
     const idx = agents.findIndex((a) => a.id === focusedId);
     if (idx !== -1 && idx >= n) setFocusedId(null);
@@ -383,6 +399,7 @@ export default function DashboardPage() {
               onToggleDiff={toggleDiff}
               onToggleFocus={toggleFocus}
               onKill={killLane}
+              onReply={replyToLane}
             />
           ))
         ) : (
