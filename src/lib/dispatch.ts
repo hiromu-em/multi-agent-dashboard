@@ -15,7 +15,7 @@ const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 // `#B 本文` で宛先を指定し、以降は `#` を省くと同じ宛先へ送られる（スティッキー）。
 // `#` 単独で宛先を解除し、窓口のClaudeとの会話に戻る。
 
-// 現在の宛先。フックとステータスラインの両方から読むのでファイルに置く。
+// 現在の宛先。サーバーを再起動しても保つためファイルに置く。
 const TARGET_FILE = join(process.cwd(), ".logs", "target.json");
 
 // 同時に走らせるセッションの上限。これを超える分はキューで待たせる。
@@ -147,7 +147,7 @@ export async function resolveAddressee(
   return target ? { tag: target.tag, sessionId: target.sessionId } : null;
 }
 
-/** ダッシュボードとステータスラインが読む、現在の宛先。 */
+/** ダッシュボードが読む、現在の宛先。 */
 export async function currentTarget(): Promise<DispatchTarget | null> {
   const target = await readTarget();
   if (!target) return null;

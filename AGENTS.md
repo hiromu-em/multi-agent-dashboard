@@ -38,7 +38,6 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/app/api/dispatch/route.ts` | 指示の受け口（POST）と現在の宛先（GET） |
 | `src/app/api/dispatch/pending/route.ts` | 存在しない宛先の「作りますか？」への返事（POST）。`confirmCreate` / `rejectCreate` |
 | `scripts/route-prompt.mjs` | 窓口CLIの `UserPromptSubmit` フック |
-| `scripts/statusline.mjs` | 窓口CLIのステータスラインに宛先を出す |
 | `src/lib/transcript.ts` | セッションの会話JSONLを読んで表示用に整形する |
 | `src/lib/lane-registry.ts` | セッションの台帳。タグの割り当てと終了時刻の記録（`.logs/sessions.json`） |
 | `src/lib/dashboard-data.ts` | ステータスの配色・ラベル定義 |
@@ -164,15 +163,11 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 
 宛先は `.logs/target.json` に持つ。フック（窓口CLI側で動く）とダッシュボードAPIの両方から読む必要があるため。
 
-**この方式は誤爆する。** 宛先が残っているのを忘れて窓口に話しかけると、その文がエージェントへ飛ぶ。Enterを押した時点で配送されるので取り消せない。したがって**現在の宛先を常時表示することが必須**：
+**この方式は誤爆する。** 宛先が残っているのを忘れて窓口に話しかけると、その文がエージェントへ飛ぶ。Enterを押した時点で配送されるので取り消せない。
 
-- `statusLine` 設定（任意コマンドの出力をCLI下部に常時表示できる）で出す。**設定すると標準の表示は置き換わる**ので、`scripts/statusline.mjs` は**ユーザー設定（`~/.claude/settings.json`）に既にあるステータスラインのコマンドを実行し、その出力の末尾に宛先を足す**。自前で作り直すと、それまで使っていた表示との差が事故になる。既存のコマンドが無いときだけ `model:… | ctx:… | dir:… | git:…` を自前で組み立てる。
+**かつては `statusLine` 設定（`scripts/statusline.mjs`）で窓口CLIの下部に宛先を常時表示していたが、運用者の判断で廃止した。** `statusLine` を設定すると標準の表示が丸ごと置き換わるため、既存のユーザー設定のコマンドを実行して出力の末尾に宛先を継ぎ足すという入り組んだ作りが必要になり、その割に得られるのは警告表示1つだった。スクリプトと3か所の `statusLine` 設定（`~/.claude`・`claude_project/.claude`・このリポジトリの `.claude`）、および元の表示を作っていた `~/.claude/statusline-command.sh` は削除済みで、標準のステータスラインに戻してある。**復活させる場合は、標準表示の置き換えになる点を承知のうえで判断すること。**
 
-**宛先だけはラベルを付けず矢印にする**（他と同じ見た目にすると埋もれる。見落とすと誤爆する箇所なので区別する）
-- **`statusLine` は `args` を受け付けない**（スキーマは `type` / `command` / `padding` / `refreshInterval` / `hideVimModeIndicator`）。`"command": "node \"C:/.../scripts/statusline.mjs\""` のように1つの文字列で書く（パスは絶対パスにする。後述）。フック側は `args` を使える
-- ステータスラインに渡る内容は `context_window`（`used_percentage` など）・`model.display_name`・`workspace.current_dir` を含む。版で変わるので、スクリプトは初回の入力を `.logs/statusline-sample.json` に1度だけ残す
-- 宛先ファイルはスクリプト自身の位置から辿る。**窓口はダッシュボードのリポジトリの外で動くことが多い**ため、セッションの作業ディレクトリを基準にしてはいけない
-- ダッシュボード側でも現在の宛先レーンを強調する
+- **したがって現在の宛先を確認する手段はダッシュボードだけになった。** 盤面では現在の宛先レーンを強調する。窓口CLIには何も出ないので、意図しない相手に文が飛んだときはまず宛先の消し忘れを疑う
 
 宛先のセッションが終了・消滅したら自動で解除して窓口に戻す。消えたセッション宛てに打ち続けるのを防ぐため。
 
@@ -242,7 +237,7 @@ claude stop <id> → claude --bg --resume <sessionId> "本文"
 
 会話JSONLには「そのセッションが何を受け取ったか」しか残らない。タグ・順番待ち・送信失敗は盤面側の事実なので、ここにしか残らない。
 
-### フックとステータスラインの設定
+### フックの設定
 
 **設定の効く範囲は「gitリポジトリのルート」で決まる。OS上の親フォルダは無関係。**
 
@@ -269,15 +264,11 @@ claude_project/multi-agent-dashboard/.claude/settings.json
       { "hooks": [ { "type": "command", "command": "node",
         "args": ["C:/.../multi-agent-dashboard/scripts/route-prompt.mjs"] } ] }
     ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "node \"C:/.../multi-agent-dashboard/scripts/statusline.mjs\""
   }
 }
 ```
 
-止めたいときは両方のファイルの `hooks` を消す（ファイルごと消せばステータスラインも元に戻る）。ダッシュボードが起動していないときは、宛先を明示した `#B ...` だけがエラーで止まり、素の入力は素通しする（窓口のCLIが使えなくなる事態を避けるため）。
+止めたいときは両方のファイルの `hooks` を消す（ファイルごと消してもよい）。ダッシュボードが起動していないときは、宛先を明示した `#B ...` だけがエラーで止まり、素の入力は素通しする（窓口のCLIが使えなくなる事態を避けるため）。
 
 **設定は各セッションの起動時に読み込まれる。** ファイルを直しても、既に動いているセッションには反映されない。`claude stop <id>` → `claude --bg --resume <sessionId> "..."` で再起動すると、会話を保ったまま新しい設定を読み直す。
 

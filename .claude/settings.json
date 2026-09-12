@@ -11,9 +11,5 @@
         ]
       }
     ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "node \"C:/Users/hiromu46hiro/OneDrive/デスクトップ/claude_project/multi-agent-dashboard/scripts/statusline.mjs\""
   }
 }
