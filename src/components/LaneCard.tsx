@@ -133,17 +133,38 @@ function MarkdownTable({ header, rows }: { header: string[]; rows: string[][] })
   );
 }
 
-// テキストを表と地の文のブロックに割って、表だけ InlineText とは別に組み立てる。
+// `#`〜`######` を見出しとして太字・やや大きめに出す。チャット欄の中なので
+// レベルの差は控えめ（h1/h2だけ少し大きく、h3以降は太さだけで区別する）。
+function MarkdownHeading({ level, text }: { level: number; text: string }) {
+  const size = level <= 1 ? "text-[1.12em]" : level === 2 ? "text-[1.05em]" : "text-[1em]";
+  const Tag = (`h${Math.min(level, 6)}` as const) as
+    | "h1"
+    | "h2"
+    | "h3"
+    | "h4"
+    | "h5"
+    | "h6";
+  return (
+    <Tag className={`mt-1.5 mb-0.5 font-bold text-inherit first:mt-0 ${size}`}>
+      <InlineText text={text} />
+    </Tag>
+  );
+}
+
+// テキストを表・見出し・地の文のブロックに割って、それぞれ別のReact要素に組み立てる。
 function InlineMarkdown({ text }: { text: string }) {
   return (
     <>
-      {splitMarkdownBlocks(text).map((block, i) =>
-        block.kind === "table" ? (
-          <MarkdownTable key={i} header={block.header} rows={block.rows} />
-        ) : (
-          <InlineText key={i} text={block.value} />
-        ),
-      )}
+      {splitMarkdownBlocks(text).map((block, i) => {
+        switch (block.kind) {
+          case "table":
+            return <MarkdownTable key={i} header={block.header} rows={block.rows} />;
+          case "heading":
+            return <MarkdownHeading key={i} level={block.level} text={block.text} />;
+          default:
+            return <InlineText key={i} text={block.value} />;
+        }
+      })}
     </>
   );
 }

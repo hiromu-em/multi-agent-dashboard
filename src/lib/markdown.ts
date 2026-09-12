@@ -51,12 +51,18 @@ export function convertBulletMarkers(text: string): string {
 
 export type MarkdownBlock =
   | { kind: "text"; value: string }
-  | { kind: "table"; header: string[]; rows: string[][] };
+  | { kind: "table"; header: string[]; rows: string[][] }
+  | { kind: "heading"; level: number; text: string };
 
 // `| a | b |` のような、両端が `|` の行。テーブルの行はすべてこの形。
 const TABLE_ROW = /^[ \t]*\|(.+)\|[ \t]*$/;
 // ヘッダの次の区切り行。`-` `:` `|` と空白だけで構成される（`:` は左右揃えの指定）。
 const TABLE_SEPARATOR = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+// `# 見出し` 〜 `###### 見出し`。`#` の後に空白が要る（GFM準拠）。7個以上の `#` は見出しに
+// しない。ここは会話の表示側の話で、窓口の宛先指定（`#B` など）のパースとは別のコードパス
+// （`src/lib/dispatch.ts`）なので、この解釈が宛先の判定に影響することはない。
+const HEADING_LINE = /^(#{1,6})[ \t]+(.+)$/;
 
 /** `| a | b |` の1行をセルの配列に割る。両端の `|` は先に落としてから `|` で割る。 */
 function splitTableRow(line: string): string[] {
@@ -65,15 +71,15 @@ function splitTableRow(line: string): string[] {
 }
 
 /**
- * テキストを「表」と「地の文」のブロックに割る。
+ * テキストを「表」「見出し」「地の文」のブロックに割る。
  *
  * 表として認めるのは「ヘッダ行」→「区切り行（---）」→本体行、が連続して並ぶ形だけ
- * （GFMのテーブル構文の最小構成）。それ以外はすべて地の文として扱い、これまでと同じ
- * インラインMarkdown（太字・斜体・コード・箇条書き）で解釈する。
+ * （GFMのテーブル構文の最小構成）。見出しは行頭の `#`〜`######`。それ以外はすべて
+ * 地の文として扱い、これまでと同じインラインMarkdown（太字・斜体・コード・箇条書き）で解釈する。
  *
  * `**要設定#7**|**局に拾われた…**|` のように、表がそのまま生の `|` として画面に出て
  * いた（`parseInlineMarkdown` は太字・斜体・コード以外の記号を一切見ないため）ので、
- * ブロック単位で先に見分けてから表だけ別扱いにする。
+ * ブロック単位で先に見分けてから表・見出しだけ別扱いにする。
  */
 export function splitMarkdownBlocks(text: string): MarkdownBlock[] {
   const lines = text.split("\n");
@@ -107,6 +113,15 @@ export function splitMarkdownBlocks(text: string): MarkdownBlock[] {
       i = j;
       continue;
     }
+
+    const headingMatch = header !== undefined ? header.match(HEADING_LINE) : null;
+    if (headingMatch) {
+      flushText();
+      blocks.push({ kind: "heading", level: headingMatch[1].length, text: headingMatch[2] });
+      i++;
+      continue;
+    }
+
     buffer.push(header);
     i++;
   }
