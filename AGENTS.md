@@ -38,7 +38,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/app/api/dispatch/route.ts` | 指示の受け口（POST）と現在の宛先（GET） |
 | `src/app/api/dispatch/pending/route.ts` | 存在しない宛先の「作りますか？」への返事（POST）。`confirmCreate` / `rejectCreate` |
 | `scripts/route-prompt.mjs` | 窓口CLIの `UserPromptSubmit` フック |
-| `scripts/target.mjs` | 現在の宛先を確認する（`npm run target`）。`.logs/target.json` を直接読む |
+| `scripts/target.mjs` | 現在の宛先を確認する（`npm run t`）。`.logs/target.json` を直接読む |
 | `src/lib/transcript.ts` | セッションの会話JSONLを読んで表示用に整形する |
 | `src/lib/lane-registry.ts` | セッションの台帳。タグの割り当てと終了時刻の記録（`.logs/sessions.json`） |
 | `src/lib/dashboard-data.ts` | ステータスの配色・ラベル定義 |
@@ -168,7 +168,7 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 
 **かつては `statusLine` 設定（`scripts/statusline.mjs`）で窓口CLIの下部に宛先を常時表示していたが、運用者の判断で廃止した。** `statusLine` を設定すると標準の表示が丸ごと置き換わるため、既存のユーザー設定のコマンドを実行して出力の末尾に宛先を継ぎ足すという入り組んだ作りが必要になり、その割に得られるのは警告表示1つだった。スクリプトと3か所の `statusLine` 設定（`~/.claude`・`claude_project/.claude`・このリポジトリの `.claude`）、および元の表示を作っていた `~/.claude/statusline-command.sh` は削除済みで、標準のステータスラインに戻してある。**復活させる場合は、標準表示の置き換えになる点を承知のうえで判断すること。**
 
-- **ダッシュボードのほか、`npm run target` でも確認できる。** `scripts/target.mjs` が `.logs/target.json` を直接読んで表示するだけの道具で、`git branch` のように「聞いたときだけ答える」。自動表示ではないので、statusLineのときのような「既存の表示を丸ごと置き換える」問題は起きない。ダッシュボードのサーバーが起きていなくても使えるよう、APIには頼らずファイルを直接読む。生きているセッションかどうかは `claude agents --json --all` で確認するが、消えていたら自動で解除するところまではしない（見るだけの道具で、実際の解除判断はダッシュボード側の役目）
+- **ダッシュボードのほか、`npm run t` でも確認できる。** `scripts/target.mjs` が `.logs/target.json` を直接読んで表示するだけの道具で、`git branch` のように「聞いたときだけ答える」。自動表示ではないので、statusLineのときのような「既存の表示を丸ごと置き換える」問題は起きない。ダッシュボードのサーバーが起きていなくても使えるよう、APIには頼らずファイルを直接読む。生きているセッションかどうかは `claude agents --json --all` で確認するが、消えていたら自動で解除するところまではしない（見るだけの道具で、実際の解除判断はダッシュボード側の役目）
 
 宛先のセッションが終了・消滅したら自動で解除して窓口に戻す。消えたセッション宛てに打ち続けるのを防ぐため。
 
