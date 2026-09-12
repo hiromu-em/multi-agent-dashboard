@@ -48,3 +48,68 @@ export function convertBulletMarkers(text: string): string {
     .map((line) => line.replace(BULLET_LINE, (_match, indent: string) => `${indent}・ `))
     .join("\n");
 }
+
+export type MarkdownBlock =
+  | { kind: "text"; value: string }
+  | { kind: "table"; header: string[]; rows: string[][] };
+
+// `| a | b |` のような、両端が `|` の行。テーブルの行はすべてこの形。
+const TABLE_ROW = /^[ \t]*\|(.+)\|[ \t]*$/;
+// ヘッダの次の区切り行。`-` `:` `|` と空白だけで構成される（`:` は左右揃えの指定）。
+const TABLE_SEPARATOR = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+/** `| a | b |` の1行をセルの配列に割る。両端の `|` は先に落としてから `|` で割る。 */
+function splitTableRow(line: string): string[] {
+  const inner = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split("|").map((cell) => cell.trim());
+}
+
+/**
+ * テキストを「表」と「地の文」のブロックに割る。
+ *
+ * 表として認めるのは「ヘッダ行」→「区切り行（---）」→本体行、が連続して並ぶ形だけ
+ * （GFMのテーブル構文の最小構成）。それ以外はすべて地の文として扱い、これまでと同じ
+ * インラインMarkdown（太字・斜体・コード・箇条書き）で解釈する。
+ *
+ * `**要設定#7**|**局に拾われた…**|` のように、表がそのまま生の `|` として画面に出て
+ * いた（`parseInlineMarkdown` は太字・斜体・コード以外の記号を一切見ないため）ので、
+ * ブロック単位で先に見分けてから表だけ別扱いにする。
+ */
+export function splitMarkdownBlocks(text: string): MarkdownBlock[] {
+  const lines = text.split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let buffer: string[] = [];
+
+  const flushText = () => {
+    if (buffer.length > 0) {
+      blocks.push({ kind: "text", value: buffer.join("\n") });
+      buffer = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; ) {
+    const header = lines[i];
+    const separator = lines[i + 1];
+    if (
+      header !== undefined &&
+      separator !== undefined &&
+      TABLE_ROW.test(header) &&
+      TABLE_SEPARATOR.test(separator)
+    ) {
+      flushText();
+      const rows: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length && TABLE_ROW.test(lines[j])) {
+        rows.push(splitTableRow(lines[j]));
+        j++;
+      }
+      blocks.push({ kind: "table", header: splitTableRow(header), rows });
+      i = j;
+      continue;
+    }
+    buffer.push(header);
+    i++;
+  }
+  flushText();
+  return blocks;
+}

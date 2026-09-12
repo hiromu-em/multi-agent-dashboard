@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { STATUS_META, type LaneStatus } from "@/lib/dashboard-data";
 import type { TranscriptEntry } from "@/lib/transcript";
-import { convertBulletMarkers, parseInlineMarkdown } from "@/lib/markdown";
+import { convertBulletMarkers, parseInlineMarkdown, splitMarkdownBlocks } from "@/lib/markdown";
 import { extractOptions } from "@/lib/reply-options";
 
 // 「最下部にいる」と判定する余白(px)。これより下端に近ければ追従を続ける。
@@ -58,7 +58,7 @@ function diffLineStyle(line: string): CSSProperties {
 
 // インラインMarkdown（**太字** `コード` *斜体*）だけをReact要素に変換する。
 // 生のHTMLタグは対象外（テキストとしてそのまま出す）。src/lib/markdown.ts 参照。
-function InlineMarkdown({ text }: { text: string }) {
+function InlineText({ text }: { text: string }) {
   return (
     <>
       {parseInlineMarkdown(convertBulletMarkers(text)).map((token, i) => {
@@ -89,6 +89,61 @@ function InlineMarkdown({ text }: { text: string }) {
             return <span key={i}>{token.value}</span>;
         }
       })}
+    </>
+  );
+}
+
+// `| a | b |` の表だけを実際の <table> にする。他は InlineText のまま。
+// 横に長い表でボードの幅を超えても、ボード自体は横スクロールさせない
+// （AGENTS.mdの固定サイズの決定）ので、表だけ自前でスクロールさせる。
+function MarkdownTable({ header, rows }: { header: string[]; rows: string[][] }) {
+  return (
+    <div className="my-1 overflow-x-auto" style={{ whiteSpace: "normal" }}>
+      <table className="border-collapse text-[0.92em]">
+        <thead>
+          <tr>
+            {header.map((cell, i) => (
+              <th
+                key={i}
+                className="border px-2 py-1 text-left font-semibold"
+                style={{ borderColor: "rgba(255,255,255,0.14)" }}
+              >
+                <InlineText text={cell} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td
+                  key={ci}
+                  className="border px-2 py-1 align-top"
+                  style={{ borderColor: "rgba(255,255,255,0.14)" }}
+                >
+                  <InlineText text={cell} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// テキストを表と地の文のブロックに割って、表だけ InlineText とは別に組み立てる。
+function InlineMarkdown({ text }: { text: string }) {
+  return (
+    <>
+      {splitMarkdownBlocks(text).map((block, i) =>
+        block.kind === "table" ? (
+          <MarkdownTable key={i} header={block.header} rows={block.rows} />
+        ) : (
+          <InlineText key={i} text={block.value} />
+        ),
+      )}
     </>
   );
 }
