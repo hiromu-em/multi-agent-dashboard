@@ -146,6 +146,8 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 
 これに対応するため、対話待ち（`state: "blocked"`）のレーンに限って例外的に `claude logs <id>` を読む（`src/lib/live-question.ts` の `readLiveQuestion`、`src/app/api/agents/[id]/logs/route.ts` から呼ぶ）。汎用のANSI端末エミュレータは作らず、AskUserQuestionの対話ピッカー1つだけを画面末尾から狙い撃ちで解釈する（見出しのチェックボックス行 `☐`/`☑` からフッター `Enter to select / to navigate` までの間を、行頭 `❯ N.` の選択肢として拾う。「Type something.」「Chat about this」はウィジェットが常に足す定型なので除外）。解釈できなければ諦めて何も足さない。これは「`claude logs` は使わない」という上の決定への例外で、対象は保留中のAskUserQuestionの中身を拾うことだけに絞ってある——JSONLの代わりに全面的に使うわけではない。
 
+**このライブの質問だけは、吹き出しには質問文だけを出し、選択肢の列挙は省く**（`LaneCard.tsx` の `TranscriptRow`、キーが `-live-question` で終わる行を判定）。選択肢は返信欄が `extractOptions` でボタン化するので、同じ一覧を吹き出しにも書くと二重に見える。表示だけを削っており、`entry.text` 自体（返信欄のボタン抽出が見る値）はそのまま——ボタン化に影響しない。
+
 **方式B（バックエンドが `claude -p --output-format stream-json` を spawn する案）は採用しない。** あれはバックエンドがセッションの所有者になる設計で、`claude --bg` で起動したセッションを外から監視する今の形と噛み合わない。構造化ログという目的はJSONL追尾で達成済み。
 
 **SSE配信のエンドポイントも置かない。** `src/app/api/agents/[id]/stream/route.ts` にスタブを置いていたが、どこからも呼ばれないまま残っていたので消した。配信すべき stdout を持っているのはバックエンドではなくCLIなので、このスタブを埋める作業は方式Bを作ることと同じになる。会話はJSONLのポーリング（5秒）で足りている。

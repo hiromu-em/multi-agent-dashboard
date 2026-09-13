@@ -184,6 +184,13 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   const isUser = entry.role === "user";
   const isError = entry.role === "error";
 
+  // `claude logs` から補ったライブの質問（api/agents/[id]/logs/route.ts の
+  // `${id}-live-question`）だけは、質問文だけを吹き出しに出し選択肢の列挙を省く。
+  // 選択肢はこのすぐ下の返信欄がボタン化するので（extractOptions は entry.text を
+  // そのまま見るので影響しない）、同じ一覧をここでも書くと二重になる。
+  const isLiveQuestion = entry.key.endsWith("-live-question");
+  const displayText = isLiveQuestion ? (entry.text.split("\n")[0] ?? entry.text) : entry.text;
+
   return (
     <div className={`flex flex-col py-1.5 ${isUser ? "items-end" : "items-start"}`}>
       <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-[#5c6067]">
@@ -208,7 +215,7 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
           }`,
         }}
       >
-        <InlineMarkdown text={entry.text} />
+        <InlineMarkdown text={displayText} />
       </div>
     </div>
   );
