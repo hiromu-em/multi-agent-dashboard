@@ -19,6 +19,7 @@ interface PendingCreate {
 /** 宛先を切り替えた直後の最初の1通で、送るかどうかの返事を待っているもの。 */
 interface PendingSend {
   tag: string;
+  name: string;
   body: string;
   at: number;
 }
@@ -27,6 +28,7 @@ interface DispatchProblem {
   at: string;
   event: "failed" | "dropped";
   tag: string;
+  name?: string;
   reason?: string;
 }
 
@@ -385,6 +387,7 @@ export default function DashboardPage() {
               {problems.map((problem) => (
                 <span key={`${problem.at}-${problem.tag}`} className="ml-2">
                   {problem.tag}
+                  {problem.name ? ` ${problem.name}` : ""}
                   {problem.event === "dropped" ? "（宛先が消えた）" : "（送信失敗）"}
                 </span>
               ))}
@@ -474,7 +477,9 @@ export default function DashboardPage() {
           className="flex shrink-0 items-center gap-3 border-b px-7 py-2.5"
           style={{ borderColor: "#12283a", background: "#0b1a26" }}
         >
-          <span className="shrink-0 font-mono text-xs font-bold text-[#7dd3fc]">{item.tag}</span>
+          <span className="shrink-0 font-mono text-xs font-bold text-[#7dd3fc]">
+            {item.tag} {item.name}
+          </span>
           <span className="shrink-0 text-[12px] text-[#bae6fd]">
             に切り替えた直後です。このまま送りますか？
           </span>

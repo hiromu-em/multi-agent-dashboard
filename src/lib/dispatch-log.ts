@@ -39,6 +39,9 @@ export interface DispatchRecord {
   event: DispatchEvent;
   tag: string;
   sessionId: string;
+  // タグだけでは何を扱っているセッションか分からないので、記録の時点の名前も残す。
+  // セッションが消えたあとでも（dropped など）盤面に名前を出せるようにするため。
+  name?: string;
   body?: string;
   reason?: string;
 }

@@ -170,6 +170,8 @@ export async function currentTarget(): Promise<DispatchTarget | null> {
 interface QueuedInstruction {
   tag: string;
   sessionId: string;
+  // 宛先が消えて捨てるとき（dropped）、名前も一緒に記録できるよう待たせた時点で控えておく。
+  name: string;
   body: string;
   queuedAt: number;
 }
@@ -225,13 +227,14 @@ function sendInBackground(lane: AgentLane, body: string): void {
   sending.add(lane.sessionId);
   void sendToSession(lane, body)
     .then(() => {
-      void logDispatch({ event: "delivered", tag: lane.tag, sessionId: lane.sessionId });
+      void logDispatch({ event: "delivered", tag: lane.tag, sessionId: lane.sessionId, name: lane.name });
     })
     .catch((error) => {
       void logDispatch({
         event: "failed",
         tag: lane.tag,
         sessionId: lane.sessionId,
+        name: lane.name,
         body,
         reason: error instanceof Error ? error.message : String(error),
       });
@@ -263,6 +266,7 @@ export async function drainQueue(): Promise<void> {
         event: "dropped",
         tag: item.tag,
         sessionId: item.sessionId,
+        name: item.name,
         body: item.body,
         reason: "宛先のセッションが盤面から消えた",
       });
@@ -276,6 +280,7 @@ export async function drainQueue(): Promise<void> {
       event: "sent",
       tag: lane.tag,
       sessionId: lane.sessionId,
+      name: lane.name,
       body: item.body,
     });
     sendInBackground(lane, item.body);
@@ -302,14 +307,14 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
   const lanes = await listAgents();
 
   if (!canSendNow(lane, activeCount(lanes))) {
-    queue.push({ tag: lane.tag, sessionId: lane.sessionId, body, queuedAt: Date.now() });
-    await logDispatch({ event: "queued", tag: lane.tag, sessionId: lane.sessionId, body });
-    return `${lane.tag} は作業中のため順番待ちにしました`;
+    queue.push({ tag: lane.tag, sessionId: lane.sessionId, name: lane.name, body, queuedAt: Date.now() });
+    await logDispatch({ event: "queued", tag: lane.tag, sessionId: lane.sessionId, name: lane.name, body });
+    return `${lane.tag}（${lane.name}）は作業中のため順番待ちにしました`;
   }
 
-  await logDispatch({ event: "sent", tag: lane.tag, sessionId: lane.sessionId, body });
+  await logDispatch({ event: "sent", tag: lane.tag, sessionId: lane.sessionId, name: lane.name, body });
   sendInBackground(lane, body);
-  return `${lane.tag} へ送りました`;
+  return `${lane.tag}（${lane.name}）へ送りました`;
 }
 
 // 存在しない宛先を指されたとき、確認を挟んでから新しいセッションを作る。
@@ -434,8 +439,8 @@ async function createLaneForTag(tag: string, body: string): Promise<string> {
 
   await reserveTag(agent.sessionId, tag);
   invalidateAgentCache();
-  await logDispatch({ event: "created", tag, sessionId: agent.sessionId, body });
-  return `${tag} を新しく作って指示を渡しました（${agent.id}）。`;
+  await logDispatch({ event: "created", tag, sessionId: agent.sessionId, name, body });
+  return `${tag}（${name}）を新しく作って指示を渡しました（${agent.id}）。`;
 }
 
 /**
@@ -448,7 +453,8 @@ async function createLaneForTag(tag: string, body: string): Promise<string> {
  * 作ってしまうと、片付けたセッションが再開したときに同じタグが2つになる。
  */
 async function handleUnknownTag(tag: string, body: string, lanes: AgentLane[]): Promise<string> {
-  const available = lanes.map((lane) => lane.tag).join(" ") || "（セッションがありません）";
+  // タグだけでは何を扱っているセッションか分からないので、名前も添える。
+  const available = lanes.map((lane) => `${lane.tag}(${lane.name})`).join(" ") || "（セッションがありません）";
 
   if (await isTagTaken(tag)) {
     pendingCreate.delete(tag);
@@ -475,6 +481,7 @@ async function handleUnknownTag(tag: string, body: string, lanes: AgentLane[]): 
 // pendingCreate と同じ理由でプロセス内に持つ（数分で消えて構わない一時的な状態）。
 interface PendingConfirm {
   sessionId: string;
+  name: string;
   body: string;
   at: number;
 }
@@ -491,6 +498,7 @@ function prunePendingConfirm(): void {
 
 export interface PendingSendView {
   tag: string;
+  name: string;
   body: string;
   at: number;
 }
@@ -500,6 +508,7 @@ export function pendingSends(): PendingSendView[] {
   prunePendingConfirm();
   return [...pendingConfirm.entries()].map(([tag, pending]) => ({
     tag,
+    name: pending.name,
     body: pending.body,
     at: pending.at,
   }));
@@ -588,7 +597,7 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     const previous = await currentTarget();
     await writeTarget(null);
     if (previous) {
-      await logDispatch({ event: "cleared", tag: previous.tag, sessionId: previous.sessionId });
+      await logDispatch({ event: "cleared", tag: previous.tag, sessionId: previous.sessionId, name: previous.name });
     }
 
     // `#` は「今のやりとりを取り消す」合図として使うので、確認待ちの作成・送信も一緒に捨てる。
@@ -619,10 +628,15 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     // （タグを打つこと自体が既に確認済みの操作）。
     if (target.needsConfirm) {
       prunePendingConfirm();
-      pendingConfirm.set(target.tag, { sessionId: target.sessionId, body: parsed.body, at: Date.now() });
+      pendingConfirm.set(target.tag, {
+        sessionId: target.sessionId,
+        name: lane.name,
+        body: parsed.body,
+        at: Date.now(),
+      });
       return {
         block: true,
-        message: `${target.tag} は宛先を切り替えた直後です。このまま${target.tag}宛てでよければ ${target.tag} とだけ打つか、盤面の「送信」を押してください。窓口と話したいなら # で解除してください（本文は預かっています）。`,
+        message: `${target.tag}（${lane.name}）は宛先を切り替えた直後です。このまま${target.tag}宛てでよければ ${target.tag} とだけ打つか、盤面の「送信」を押してください。窓口と話したいなら # で解除してください（本文は預かっています）。`,
       };
     }
 
