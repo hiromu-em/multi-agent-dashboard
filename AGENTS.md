@@ -37,6 +37,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 | `src/lib/dispatch-log.ts` | 配送の記録（`.logs/dispatch.jsonl`）と取りこぼしの抽出 |
 | `src/app/api/dispatch/route.ts` | 指示の受け口（POST）と現在の宛先（GET） |
 | `src/app/api/dispatch/pending/route.ts` | 存在しない宛先の「作りますか？」への返事（POST）。`confirmCreate` / `rejectCreate` |
+| `src/app/api/dispatch/confirm-send/route.ts` | 宛先切替直後の「このまま送りますか？」への返事（POST）。`confirmSend` / `rejectSend` |
 | `scripts/route-prompt.mjs` | 窓口CLIの `UserPromptSubmit` フック |
 | `scripts/target.mjs` | 現在の宛先を確認する（`npm run t`）。`.logs/target.json` を直接読む |
 | `src/lib/transcript.ts` | セッションの会話JSONLを読んで表示用に整形する |
@@ -171,6 +172,19 @@ Claude Code はセッションごとの会話を JSONL で書き出している�
 - **ダッシュボードのほか、`npm run t` でも確認できる。** `scripts/target.mjs` が `.logs/target.json` を直接読んで表示するだけの道具で、`git branch` のように「聞いたときだけ答える」。自動表示ではないので、statusLineのときのような「既存の表示を丸ごと置き換える」問題は起きない。ダッシュボードのサーバーが起きていなくても使えるよう、APIには頼らずファイルを直接読む。生きているセッションかどうかは `claude agents --json --all` で確認するが、消えていたら自動で解除するところまではしない（見るだけの道具で、実際の解除判断はダッシュボード側の役目）
 
 宛先のセッションが終了・消滅したら自動で解除して窓口に戻す。消えたセッション宛てに打ち続けるのを防ぐため。
+
+**宛先を切り替えた直後の最初の1通だけ、送る前に一呼吸置く**（`DispatchTarget.needsConfirm`、`pendingConfirm`）。誤爆がいちばん起きやすいのは「切り替えた直後に、窓口へ話しかけているつもりで打った一言」なので、そこだけを狙って確認を挟む。
+
+```
+窓口:  #B 調べておいて        → #Bへ送信（needsConfirmが立つ）
+       ありがとう             → 「#B は宛先を切り替えた直後です。このまま送るなら
+                                  #B とだけ打つか、盤面の「送信」を押してください」
+                                  （本文は預かったまま、まだ送っていない）
+       #B                     → 確認できたので送信。needsConfirmが下りる
+       2通目です              → 以降はこれまで通り確認なしで即送信
+```
+
+存在しない宛先の確認（`handleUnknownTag`）と仕組みは同じ形（本文を預かる、盤面ボタンとタグだけの入力の2経路、`confirmSend`/`rejectSend`）だが、対象が違う——あちらは「セッションを作るか」、こちらは「今ある宛先へこの1通を送るか」なので、保留は別のMap（`pendingConfirm`）に分けてある。`needsConfirm`が立つのは**宛先が実際に変わったとき**だけで、`#B 本文`を連続で打つような明示的な再送信では立たない（`#`を打つこと自体がすでに確認済みの操作なので）。盤面の「送信」ボタンは`POST /api/dispatch/confirm-send`。`#`単独（宛先の解除）はこの保留も一緒に捨てる。
 
 ### 窓口CLIから指示を飛ばす仕組み
 

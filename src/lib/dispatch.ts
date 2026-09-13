@@ -29,6 +29,10 @@ export interface DispatchTarget {
   sessionId: string;
   name: string;
   updatedAt: number;
+  // 宛先を切り替えた直後で、まだ「#無しの入力」を確認していない。
+  // 切り替え後いちばん誤爆しやすい最初の1通だけ一呼吸置くためのフラグ
+  // （confirmSend で消費されるまで立ったまま）。
+  needsConfirm: boolean;
 }
 
 /** 窓口に返す判断。`block` なら窓口のClaudeにはプロンプトを渡さない。 */
@@ -100,6 +104,7 @@ async function readTarget(): Promise<DispatchTarget | null> {
         sessionId: target.sessionId,
         name: typeof target.name === "string" ? target.name : "",
         updatedAt: typeof target.updatedAt === "number" ? target.updatedAt : 0,
+        needsConfirm: target.needsConfirm === true,
       };
     }
   } catch {
@@ -461,6 +466,76 @@ async function handleUnknownTag(tag: string, body: string, lanes: AgentLane[]): 
   return `${tag} という宛先はありません。今ある宛先: ${available} / 盤面の「実行」を押すか、もう一度 ${tag} と打つと、この指示のまま新しいセッションを作ります（${tag} だけでよく、本文は預かっています）。`;
 }
 
+// 宛先を切り替えた直後、`#`無しの最初の1通だけ保留して確認を挟む。
+//
+// 誤爆（`#B` へ切り替えたのを忘れて窓口のつもりで話しかける）がいちばん起きやすいのは
+// 切り替えた直後だと考え、そこだけ一呼吸置く。2通目以降は目的の相手だと分かっている
+// はずなので、これまで通りスティッキーのまま連続送信できる。
+//
+// pendingCreate と同じ理由でプロセス内に持つ（数分で消えて構わない一時的な状態）。
+interface PendingConfirm {
+  sessionId: string;
+  body: string;
+  at: number;
+}
+
+const pendingConfirm = new Map<string, PendingConfirm>();
+
+/** 期限切れの保留を落とす。 */
+function prunePendingConfirm(): void {
+  const now = Date.now();
+  for (const [tag, pending] of pendingConfirm) {
+    if (now - pending.at > CONFIRM_WINDOW_MS) pendingConfirm.delete(tag);
+  }
+}
+
+export interface PendingSendView {
+  tag: string;
+  body: string;
+  at: number;
+}
+
+/** 盤面に出す、確認待ちの送信。 */
+export function pendingSends(): PendingSendView[] {
+  prunePendingConfirm();
+  return [...pendingConfirm.entries()].map(([tag, pending]) => ({
+    tag,
+    body: pending.body,
+    at: pending.at,
+  }));
+}
+
+/** 盤面の「取消」。預かっていた本文を捨てる。宛先自体の解除はしない。 */
+export function rejectSend(tag: string): boolean {
+  return pendingConfirm.delete(tag);
+}
+
+/**
+ * 盤面の「送信」。預かっていた本文をそのまま送る。
+ * 窓口で `#B` とタグだけ打った場合もここへ来る。
+ *
+ * 送ったら宛先の `needsConfirm` を下ろす。以降の `#` 無しの入力は、次に
+ * 宛先が切り替わるまで確認なしで送れる。
+ */
+export async function confirmSend(tag: string): Promise<{ ok: boolean; message: string }> {
+  prunePendingConfirm();
+  const pending = pendingConfirm.get(tag);
+  if (!pending) return { ok: false, message: `${tag} の送信確認はありません（期限切れの可能性）。` };
+
+  pendingConfirm.delete(tag);
+
+  const lanes = await listAgents();
+  const lane = lanes.find((item) => item.sessionId === pending.sessionId);
+  if (!lane) return { ok: false, message: `${tag} のセッションが見つかりません。` };
+
+  const target = await readTarget();
+  if (target && target.tag === tag) {
+    await writeTarget({ ...target, needsConfirm: false });
+  }
+
+  return { ok: true, message: await deliver(lane, pending.body) };
+}
+
 /**
  * ダッシュボードのレーンから直接返信する。
  *
@@ -516,10 +591,13 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
       await logDispatch({ event: "cleared", tag: previous.tag, sessionId: previous.sessionId });
     }
 
-    // `#` は「今のやりとりを取り消す」合図として使うので、確認待ちの作成も一緒に捨てる。
-    const dropped = pendingCreates().map((p) => p.tag);
-    for (const tag of dropped) rejectCreate(tag);
-    const note = dropped.length > 0 ? ` ${dropped.join(" ")} の作成も取り消しました。` : "";
+    // `#` は「今のやりとりを取り消す」合図として使うので、確認待ちの作成・送信も一緒に捨てる。
+    const droppedCreates = pendingCreates().map((p) => p.tag);
+    for (const tag of droppedCreates) rejectCreate(tag);
+    const droppedSends = pendingSends().map((p) => p.tag);
+    for (const tag of droppedSends) rejectSend(tag);
+    const dropped = [...droppedCreates, ...droppedSends];
+    const note = dropped.length > 0 ? ` ${dropped.join(" ")} の作成・送信も取り消しました。` : "";
 
     return { block: true, message: `宛先を解除しました。以降は窓口のClaudeと会話します。${note}` };
   }
@@ -532,17 +610,34 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     const lane = lanes.find((item) => item.sessionId === target.sessionId);
     if (!lane) {
       await writeTarget(null);
+      rejectSend(target.tag);
       return { block: true, message: "宛先のセッションが見つからないため解除しました。" };
     }
+
+    // 宛先を切り替えた直後の最初の1通だけ、本文を預かって一呼吸置く。
+    // `#B 本文` のように明示的に打った入力はここを通らないので対象外
+    // （タグを打つこと自体が既に確認済みの操作）。
+    if (target.needsConfirm) {
+      prunePendingConfirm();
+      pendingConfirm.set(target.tag, { sessionId: target.sessionId, body: parsed.body, at: Date.now() });
+      return {
+        block: true,
+        message: `${target.tag} は宛先を切り替えた直後です。このまま${target.tag}宛てでよければ ${target.tag} とだけ打つか、盤面の「送信」を押してください。窓口と話したいなら # で解除してください（本文は預かっています）。`,
+      };
+    }
+
     return { block: true, message: await deliver(lane, parsed.body) };
   }
 
   if (parsed.instructions.length === 0) {
-    // 本文の無い `#K` は、確認待ちがあれば「実行」の合図として扱う。
-    // 打ち直さずに数文字で確認できるようにするためで、盤面の「実行」ボタンと同じ経路。
+    // 本文の無い `#K` は、確認待ちがあれば「実行」（または「送信」）の合図として扱う。
+    // 打ち直さずに数文字で確認できるようにするためで、盤面のボタンと同じ経路。
     const bareTag = bareTagOf(prompt);
     if (bareTag && pendingCreates().some((p) => p.tag === bareTag)) {
       return { block: true, message: (await confirmCreate(bareTag)).message };
+    }
+    if (bareTag && pendingSends().some((p) => p.tag === bareTag)) {
+      return { block: true, message: (await confirmSend(bareTag)).message };
     }
     return { block: true, message: "宛先だけで本文がありません。" };
   }
@@ -572,12 +667,21 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
   );
 
   // 最後に書いた宛先を、以降の `#` 無しの入力の送り先にする。
+  //
+  // 前と違うタグへの切り替えなら needsConfirm を立てる。今回のように `#タグ 本文` と
+  // 明示して打つこと自体はすでに確認済みの操作なので対象外——対象は次に来る
+  // `#無し` の1通だけ。同じタグへの明示的な再送信（切り替えではない）なら、
+  // 誤爆の対象になっている保留があっても意味が無いので一緒に捨てる。
   const last = resolved[resolved.length - 1].lane;
+  const previousTarget = await readTarget();
+  const isNewSwitch = !previousTarget || previousTarget.tag !== last.tag;
+  rejectSend(last.tag);
   await writeTarget({
     tag: last.tag,
     sessionId: last.sessionId,
     name: last.name,
     updatedAt: Date.now(),
+    needsConfirm: isNewSwitch,
   });
 
   return { block: true, message: results.join(" / ") };

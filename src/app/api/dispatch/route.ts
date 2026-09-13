@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   currentTarget,
   pendingCreates,
+  pendingSends,
   queuedCount,
   resolveAddressee,
   routePrompt,
@@ -70,8 +71,9 @@ export async function GET(req: NextRequest) {
       queued: queuedCount(),
       problems: await recentProblems(),
       pending: pendingCreates(),
+      pendingSends: pendingSends(),
     });
   } catch {
-    return NextResponse.json({ target: null, queued: 0, problems: [], pending: [] });
+    return NextResponse.json({ target: null, queued: 0, problems: [], pending: [], pendingSends: [] });
   }
 }

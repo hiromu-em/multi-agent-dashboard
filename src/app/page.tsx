@@ -16,6 +16,13 @@ interface PendingCreate {
   at: number;
 }
 
+/** 宛先を切り替えた直後の最初の1通で、送るかどうかの返事を待っているもの。 */
+interface PendingSend {
+  tag: string;
+  body: string;
+  at: number;
+}
+
 interface DispatchProblem {
   at: string;
   event: "failed" | "dropped";
@@ -56,6 +63,9 @@ export default function DashboardPage() {
   // 存在しない宛先を指されて、作るかどうかの返事を待っているもの。
   const [pending, setPending] = useState<PendingCreate[]>([]);
   const [pendingBusy, setPendingBusy] = useState<string | null>(null);
+  // 宛先を切り替えた直後の最初の1通で、送るかどうかの返事を待っているもの。
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  const [pendingSendBusy, setPendingSendBusy] = useState<string | null>(null);
 
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
@@ -93,6 +103,7 @@ export default function DashboardPage() {
       setQueued(json?.queued ?? 0);
       setProblems(json?.problems ?? []);
       setPending(json?.pending ?? []);
+      setPendingSends(json?.pendingSends ?? []);
     } catch {
       // 表示だけの情報なので、取れなければ前回のままにする。
     }
@@ -114,6 +125,29 @@ export default function DashboardPage() {
         setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
         setPendingBusy(null);
+        await fetchTarget();
+      }
+    },
+    [fetchTarget],
+  );
+
+  // 宛先を切り替えた直後の「このまま送りますか？」への返事。
+  // 窓口で `#B` と打つのと同じ保留を消化する。
+  const answerPendingSend = useCallback(
+    async (tag: string, action: "send" | "reject") => {
+      setPendingSendBusy(tag);
+      try {
+        const res = await fetch("/api/dispatch/confirm-send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tag, action }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) setLoadError(json?.error ?? "送信に失敗しました");
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setPendingSendBusy(null);
         await fetchTarget();
       }
     },
@@ -425,6 +459,44 @@ export default function DashboardPage() {
             className="shrink-0 cursor-pointer rounded-md border border-[#3a3d44] px-3 py-1 text-[12px] text-[#aeb2b8] disabled:cursor-not-allowed disabled:opacity-40"
           >
             拒否
+          </button>
+        </div>
+      ))}
+
+      {/*
+        宛先を切り替えた直後、`#`無しの最初の1通の確認。誤爆がいちばん起きやすい
+        瞬間はここだと考え、この1通だけ一呼吸置く（2通目以降は毎回は聞かない）。
+        「作りますか？」（上のバー）とは別の保留なので、色も分けて区別する。
+      */}
+      {pendingSends.map((item) => (
+        <div
+          key={item.tag}
+          className="flex shrink-0 items-center gap-3 border-b px-7 py-2.5"
+          style={{ borderColor: "#12283a", background: "#0b1a26" }}
+        >
+          <span className="shrink-0 font-mono text-xs font-bold text-[#7dd3fc]">{item.tag}</span>
+          <span className="shrink-0 text-[12px] text-[#bae6fd]">
+            に切り替えた直後です。このまま送りますか？
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#8a8f98]">
+            {item.body}
+          </span>
+          <button
+            type="button"
+            disabled={pendingSendBusy === item.tag}
+            onClick={() => answerPendingSend(item.tag, "send")}
+            className="shrink-0 cursor-pointer rounded-md border px-3 py-1 text-[12px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ borderColor: "#1e4a63", background: "rgba(125,211,252,0.14)", color: "#7dd3fc" }}
+          >
+            送信
+          </button>
+          <button
+            type="button"
+            disabled={pendingSendBusy === item.tag}
+            onClick={() => answerPendingSend(item.tag, "reject")}
+            className="shrink-0 cursor-pointer rounded-md border border-[#3a3d44] px-3 py-1 text-[12px] text-[#aeb2b8] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            取消
           </button>
         </div>
       ))}
