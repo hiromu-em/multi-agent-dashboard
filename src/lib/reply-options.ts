@@ -4,6 +4,13 @@
 // 「1. 案A」「A) 案B」のような列挙で選択肢を示すことが多いので、それをボタン化する。
 // 構造化されたデータではなく自由文からの推測なので、拾えないときは無理に作らない
 // （本文のボタンを出さず、自由入力欄だけになる）。
+//
+// 素の `-` `*` 箇条書き（`・` 変換後も含む）は選択肢の合図に使わない。
+// かつては使っていたが、実際には「作業内容の説明」のような、選ばせる意図の無い
+// 普通の箇条書きにまで反応していた（例: 「- ○○を追加した」「- △△を直した」という
+// 作業報告の4行が、そのままボタン化されて選択肢のように見えてしまった）。番号・記号
+// 付きの列挙（`1.` `A)` など）は「選ばせる」意図がはっきりしているのに対し、素の
+// 箇条書きは地の文の一部として使われる頻度のほうが圧倒的に高く、見分けが付かない。
 
 import { splitMarkdownBlocks } from "@/lib/markdown";
 
@@ -14,10 +21,8 @@ export interface ReplyOption {
   text: string;
 }
 
-// 行頭の `1.` `1)` `A.` `A)`、生のMarkdown箇条書き `- ` `* `、または箇条書き変換後の
-// `・` を選択肢の合図とみなす。ここで見るのは表示前の生テキスト（entry.text）なので、
-// 変換後の `・` だけでなく変換前の `-` `*` も拾わないと取りこぼす。
-const OPTION_LINE = /^\s*(?:(\d{1,2})[.)]|([A-Za-z])[.)]|[-*](?!\*)|・)\s+(.+)$/;
+// 行頭の `1.` `1)` `A.` `A)` だけを選択肢の合図とみなす。
+const OPTION_LINE = /^\s*(?:(\d{1,2})[.)]|([A-Za-z])[.)])\s+(.+)$/;
 
 // 誤検出（本文中のただの箇条書き・番号付き手順）を避けるため、これ未満の候補数なら
 // 「選択肢」として扱わない。
@@ -29,7 +34,9 @@ function extractLineOptions(text: string): ReplyOption[] {
   for (const line of text.split("\n")) {
     const match = line.match(OPTION_LINE);
     if (!match) continue;
-    const label = match[1] ?? match[2] ?? String(options.length + 1);
+    // OPTION_LINE は数字・英字どちらかの捕捉グループが必ず埋まる（`match[1]` と
+    // `match[2]` のどちらかは常に一致する）ので、フォールバックのラベル生成は要らない。
+    const label = (match[1] ?? match[2])!;
     const body = match[3]?.trim();
     if (body) options.push({ label, text: body });
   }
