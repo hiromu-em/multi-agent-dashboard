@@ -9,11 +9,10 @@ import { isTagTaken, reserveTag } from "@/lib/lane-registry";
 const run = promisify(execFile);
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 
-// 窓口CLIから来た入力を、宛先のセッションへ振り分ける。
+// ダッシュボードの指示入力欄から来た入力を、宛先のセッションへ振り分ける。
 //
-// 指示はすべて窓口のCLIから出す。ダッシュボードに入力欄は無い。
 // `#B 本文` で宛先を指定し、以降は `#` を省くと同じ宛先へ送られる（スティッキー）。
-// `#` 単独で宛先を解除し、窓口のClaudeとの会話に戻る。
+// `#` 単独で宛先を解除する（以降は `#タグ` を明示しないと送れない）。
 
 // 現在の宛先。サーバーを再起動しても保つためファイルに置く。
 const TARGET_FILE = join(process.cwd(), ".logs", "target.json");
@@ -35,9 +34,9 @@ export interface DispatchTarget {
   needsConfirm: boolean;
 }
 
-/** 窓口に返す判断。`block` なら窓口のClaudeにはプロンプトを渡さない。 */
-export interface RouteResult {
-  block: boolean;
+/** ダッシュボードの入力欄に返す結果。`ok` は表示の色分け（成功/要確認は通常表示、失敗は赤）にだけ使う。 */
+export interface DispatchResult {
+  ok: boolean;
   message: string;
 }
 
@@ -134,8 +133,8 @@ async function writeTarget(target: DispatchTarget | null): Promise<void> {
  * `currentTarget()` は内部で `listAgents()` を呼ぶため、まさに壊れている経路に
  * 再び依存してしまい使えない。`.logs/target.json` を直接読む。
  *
- * `null` なら宛先なしの素の入力（横取りしない）。それ以外は
- * 「宛先付きなら黙って窓口へ流さず必ず止める」という設計方針の対象。
+ * `null` なら宛先なしの素の入力。それ以外は
+ * 「宛先付きなら黙って消さず必ずエラーを返す」という設計方針の対象。
  */
 export async function resolveAddressee(
   prompt: string,
@@ -219,8 +218,8 @@ async function sendToSession(lane: AgentLane, body: string): Promise<void> {
 /**
  * 送信を待たずに返す。
  *
- * `claude.exe` の起動は数秒かかるので、窓口の入力をその間止めない。
- * そのぶん結果は窓口に返らないので、成否は必ず記録に残す。
+ * `claude.exe` の起動は数秒かかるので、入力欄の送信操作をその間止めない。
+ * そのぶん結果は呼び出し元にすぐ返らないので、成否は必ず記録に残す。
  * 以前は直近の失敗を変数1つに持っていたが、次の送信が成功すると消えていた。
  */
 function sendInBackground(lane: AgentLane, body: string): void {
@@ -259,7 +258,7 @@ export async function drainQueue(): Promise<void> {
     const lane = byId.get(item.sessionId);
 
     // 宛先が消えた指示は捨てる。届け先が無い。
-    // 窓口には「順番待ちにしました」と伝えてあるので、捨てたことを必ず残す。
+    // 入力欄には「順番待ちにしました」と伝えてあるので、捨てたことを必ず残す。
     if (!lane) {
       queue.splice(queue.indexOf(item), 1);
       void logDispatch({
@@ -321,7 +320,7 @@ async function deliver(lane: AgentLane, body: string): Promise<string> {
 //
 // 打ち間違い（`#B` のつもりで `#K`）でセッションが生えるのは避けたいので、
 // 1回目は作らずに知らせるだけにする。**本文はここで預かる**ので、確認のときに
-// もう一度打ち直す必要は無い。確認する道は2つ：盤面の「実行」ボタンと、窓口で
+// もう一度打ち直す必要は無い。確認する道は2つ：盤面の「実行」ボタンと、入力欄で
 // `#K` とタグだけ打つこと。どちらも同じ保留を消化する。
 //
 // 待ち合わせはプロセス内に持つ。数分で消えて構わない一時的な状態なので、
@@ -365,7 +364,7 @@ export function rejectCreate(tag: string): boolean {
 
 /**
  * 盤面の「実行」。預かっていた本文でセッションを作る。
- * 窓口で `#K` とタグだけ打った場合もここへ来る。
+ * 入力欄で `#K` とタグだけ打った場合もここへ来る。
  */
 export async function confirmCreate(tag: string): Promise<{ ok: boolean; message: string }> {
   prunePending();
@@ -474,7 +473,7 @@ async function handleUnknownTag(tag: string, body: string, lanes: AgentLane[]): 
 
 // 宛先を切り替えた直後、`#`無しの最初の1通だけ保留して確認を挟む。
 //
-// 誤爆（`#B` へ切り替えたのを忘れて窓口のつもりで話しかける）がいちばん起きやすいのは
+// 誤爆（`#B` へ切り替えたのを忘れて別の宛先のつもりで話しかける）がいちばん起きやすいのは
 // 切り替えた直後だと考え、そこだけ一呼吸置く。2通目以降は目的の相手だと分かっている
 // はずなので、これまで通りスティッキーのまま連続送信できる。
 //
@@ -521,7 +520,7 @@ export function rejectSend(tag: string): boolean {
 
 /**
  * 盤面の「送信」。預かっていた本文をそのまま送る。
- * 窓口で `#B` とタグだけ打った場合もここへ来る。
+ * 入力欄で `#B` とタグだけ打った場合もここへ来る。
  *
  * 送ったら宛先の `needsConfirm` を下ろす。以降の `#` 無しの入力は、次に
  * 宛先が切り替わるまで確認なしで送れる。
@@ -548,10 +547,9 @@ export async function confirmSend(tag: string): Promise<{ ok: boolean; message: 
 /**
  * ダッシュボードのレーンから直接返信する。
  *
- * 指示はすべて窓口のCLIから出す設計だが、盤面に見えているレーンへの返信に限っては
- * 例外を認める。宛先はUIで選んだレーンそのものなので、`#B` のようなタグ解決は
- * 要らない。それ以外の用途（新しい指示を好きな宛先に送る）には使わない——それは
- * 引き続き窓口のCLI経由でしか出来ない。
+ * 上部のグローバル入力欄（`routePrompt`）は `#タグ` によるスティッキー宛先解決を
+ * 経由するのに対し、こちらは各レーンの返信欄専用の経路。宛先はUIで選んだレーン
+ * そのものなので、タグ解決は要らない。
  *
  * 当初は `waiting`（CLIの `blocked`）のレーンだけに許していたが、質問を返して
  * ターンを終えたセッションをCLIは数秒で `done` として返すため、返信欄が出ても
@@ -573,23 +571,10 @@ export async function replyFromBoard(
 }
 
 /**
- * 窓口の入力を振り分ける。窓口のCLIのフックから呼ばれる。
- * `block: false` を返した入力だけが窓口のClaudeに渡る。
+ * ダッシュボードの指示入力欄からの入力を振り分ける。
  */
-export async function routePrompt(prompt: string, sessionId?: string): Promise<RouteResult> {
+export async function routePrompt(prompt: string): Promise<DispatchResult> {
   const lanes = await listAgents();
-
-  // 呼び出し元がレーンそのものなら横取りしない。
-  //
-  // 配送先のエージェントが同じフックを持っていると、こちらが送った指示を
-  // そのエージェントがまた振り分けてしまい、指示が延々と回り続ける。
-  // 窓口はボードに並ばない決まりなので、レーンに居る＝窓口ではない
-  // （`claude --bg` で起動した窓口自身も `.logs/gateway.json` に登録して
-  // ここで弾く。登録し忘れると、この分岐に引っかかって窓口からの `#` 指示が
-  // 一切配送されず、素通りしているように見える）。
-  if (sessionId && lanes.some((lane) => lane.sessionId === sessionId)) {
-    return { block: false, message: "" };
-  }
 
   const parsed = parsePrompt(prompt);
 
@@ -608,19 +593,20 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     const dropped = [...droppedCreates, ...droppedSends];
     const note = dropped.length > 0 ? ` ${dropped.join(" ")} の作成・送信も取り消しました。` : "";
 
-    return { block: true, message: `宛先を解除しました。以降は窓口のClaudeと会話します。${note}` };
+    return { ok: true, message: `宛先を解除しました。${note}` };
   }
 
   if (parsed.kind === "plain") {
     const target = await currentTarget();
-    // 宛先が無ければ横取りしない。窓口のClaudeとの普通の会話。
-    if (!target) return { block: false, message: "" };
+    // 宛先が無ければ送りようがない。窓口CLIの時代は「素の入力は普通の会話」に
+    // 落とせたが、ダッシュボードの入力欄はレーンへ送る以外の役目を持たない。
+    if (!target) return { ok: false, message: "宛先がありません。#タグ で指定してください。" };
 
     const lane = lanes.find((item) => item.sessionId === target.sessionId);
     if (!lane) {
       await writeTarget(null);
       rejectSend(target.tag);
-      return { block: true, message: "宛先のセッションが見つからないため解除しました。" };
+      return { ok: false, message: "宛先のセッションが見つからないため解除しました。" };
     }
 
     // 宛先を切り替えた直後の最初の1通だけ、本文を預かって一呼吸置く。
@@ -635,12 +621,12 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
         at: Date.now(),
       });
       return {
-        block: true,
-        message: `${target.tag}（${lane.name}）は宛先を切り替えた直後です。このまま${target.tag}宛てでよければ ${target.tag} とだけ打つか、盤面の「送信」を押してください。窓口と話したいなら # で解除してください（本文は預かっています）。`,
+        ok: true,
+        message: `${target.tag}（${lane.name}）は宛先を切り替えた直後です。このまま${target.tag}宛てでよければ ${target.tag} とだけ打つか、盤面の「送信」を押してください（本文は預かっています）。`,
       };
     }
 
-    return { block: true, message: await deliver(lane, parsed.body) };
+    return { ok: true, message: await deliver(lane, parsed.body) };
   }
 
   if (parsed.instructions.length === 0) {
@@ -648,12 +634,12 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     // 打ち直さずに数文字で確認できるようにするためで、盤面のボタンと同じ経路。
     const bareTag = bareTagOf(prompt);
     if (bareTag && pendingCreates().some((p) => p.tag === bareTag)) {
-      return { block: true, message: (await confirmCreate(bareTag)).message };
+      return await confirmCreate(bareTag);
     }
     if (bareTag && pendingSends().some((p) => p.tag === bareTag)) {
-      return { block: true, message: (await confirmSend(bareTag)).message };
+      return await confirmSend(bareTag);
     }
-    return { block: true, message: "宛先だけで本文がありません。" };
+    return { ok: false, message: "宛先だけで本文がありません。" };
   }
 
   // 宛先を先に解決する。1つでも不明なら何も送らない。
@@ -663,7 +649,7 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     const lane = lanes.find((item) => item.tag === instruction.tag);
     if (!lane) {
       // 確認を挟んでから作る。1回目は知らせるだけ、同じ宛先へもう一度送られたら作る。
-      return { block: true, message: await handleUnknownTag(instruction.tag, instruction.body, lanes) };
+      return { ok: false, message: await handleUnknownTag(instruction.tag, instruction.body, lanes) };
     }
     resolved.push({ lane, body: instruction.body });
   }
@@ -698,5 +684,5 @@ export async function routePrompt(prompt: string, sessionId?: string): Promise<R
     needsConfirm: isNewSwitch,
   });
 
-  return { block: true, message: results.join(" / ") };
+  return { ok: true, message: results.join(" / ") };
 }

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { confirmCreate, rejectCreate } from "@/lib/dispatch";
 
 // 存在しない宛先を指されたときの「作りますか？」に、盤面から答える口。
-// 窓口で `#K` とタグだけ打つのと同じ保留を消化する（src/lib/dispatch.ts）。
+// 入力欄で `#K` とタグだけ打つのと同じ保留を消化する（src/lib/dispatch.ts）。
 
 export const dynamic = "force-dynamic";
 

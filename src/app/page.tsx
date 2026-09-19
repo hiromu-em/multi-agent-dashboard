@@ -68,6 +68,10 @@ export default function DashboardPage() {
   // 宛先を切り替えた直後の最初の1通で、送るかどうかの返事を待っているもの。
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   const [pendingSendBusy, setPendingSendBusy] = useState<string | null>(null);
+  // 指示入力欄（グローバル）。`#タグ 本文` で宛先を指定、省略時は直前の宛先へ。
+  const [dispatchText, setDispatchText] = useState("");
+  const [dispatchBusy, setDispatchBusy] = useState(false);
+  const [dispatchStatus, setDispatchStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
@@ -96,7 +100,7 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // 窓口CLIで `#` を省いた入力が飛ぶ先。誤爆を防ぐため盤面でも強調する。
+  // 入力欄で `#` を省いた入力が飛ぶ先。誤爆を防ぐため盤面でも強調する。
   const fetchTarget = useCallback(async () => {
     try {
       const res = await fetch("/api/dispatch", { cache: "no-store" });
@@ -111,7 +115,7 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // 「作りますか？」への返事。窓口で `#K` と打つのと同じ保留を消化する。
+  // 「作りますか？」への返事。入力欄で `#K` と打つのと同じ保留を消化する。
   const answerPending = useCallback(
     async (tag: string, action: "create" | "reject") => {
       setPendingBusy(tag);
@@ -134,7 +138,7 @@ export default function DashboardPage() {
   );
 
   // 宛先を切り替えた直後の「このまま送りますか？」への返事。
-  // 窓口で `#B` と打つのと同じ保留を消化する。
+  // 入力欄で `#B` と打つのと同じ保留を消化する。
   const answerPendingSend = useCallback(
     async (tag: string, action: "send" | "reject") => {
       setPendingSendBusy(tag);
@@ -172,6 +176,31 @@ export default function DashboardPage() {
       setInitialLoaded(true);
     }
   }, [pruneVanished]);
+
+  // グローバル入力欄からの送信。宛先の解決・スティッキー・確認まわりの判断は
+  // すべてサーバー側（src/lib/dispatch.ts の routePrompt）に任せ、ここは結果を出すだけ。
+  const submitDispatch = useCallback(async () => {
+    const text = dispatchText;
+    if (!text.trim() || dispatchBusy) return;
+
+    setDispatchBusy(true);
+    try {
+      const res = await fetch("/api/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: text }),
+      });
+      const json = await res.json().catch(() => ({}));
+      setDispatchStatus({ ok: json?.ok !== false, message: json?.message ?? "" });
+      setDispatchText("");
+    } catch (error) {
+      setDispatchStatus({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setDispatchBusy(false);
+      await fetchTarget();
+      await fetchAgents();
+    }
+  }, [dispatchText, dispatchBusy, fetchTarget, fetchAgents]);
 
   useEffect(() => {
     const poll = () => {
@@ -299,7 +328,7 @@ export default function DashboardPage() {
     }
   }
 
-  // レーンへの返信。ダッシュボードの入力欄からの唯一の送信経路。
+  // レーンへの返信。各レーンの返信欄専用の経路（グローバル入力欄とは別）。
   async function replyToLane(id: string, body: string): Promise<{ ok: boolean; message: string }> {
     try {
       const res = await fetch(`/api/agents/${id}/reply`, {
@@ -429,8 +458,52 @@ export default function DashboardPage() {
       )}
 
       {/*
+        指示の入力欄。ヘッダーの外に置くのは、ヘッダーを畳んでいても使えるように
+        するため（ダッシュボードからレーンへ指示を出す唯一の経路なので、隠れて
+        使えなくなると困る）。宛先の解決・スティッキー・確認はすべてサーバー側
+        （src/lib/dispatch.ts の routePrompt）に任せ、ここでは結果を表示するだけ。
+      */}
+      <div className="flex shrink-0 items-start gap-3 border-b border-[#1d2024] bg-[#111317] px-7 py-3">
+        <textarea
+          value={dispatchText}
+          onChange={(e) => setDispatchText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submitDispatch();
+            }
+          }}
+          placeholder="#B 本文 のように宛先を指定（省略時は直前の宛先へ）。# 単独で宛先解除。Shift+Enterで改行、複数行で複数宛先に同時送信"
+          rows={2}
+          disabled={dispatchBusy}
+          className="min-w-0 flex-1 resize-none rounded-md border border-[#23262b] bg-[#0a0b0d] px-3 py-2 font-mono text-[12.5px] text-[#e6e8eb] placeholder:text-[#5c6067] focus:border-[#f2874a] focus:outline-none disabled:opacity-50"
+        />
+        <button
+          type="button"
+          onClick={submitDispatch}
+          disabled={dispatchBusy || !dispatchText.trim()}
+          className="shrink-0 cursor-pointer rounded-md border px-4 py-2 text-[12.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ borderColor: "#5a3018", background: "rgba(242,135,74,0.14)", color: "#f2874a" }}
+        >
+          送信
+        </button>
+      </div>
+      {dispatchStatus && (
+        <div
+          className="shrink-0 border-b px-7 py-1.5 font-mono text-[11.5px]"
+          style={
+            dispatchStatus.ok
+              ? { borderColor: "#1d2024", background: "#111317", color: "#8a8f98" }
+              : { borderColor: "#3a1414", background: "#1a0d0d", color: "#f87171" }
+          }
+        >
+          {dispatchStatus.message}
+        </div>
+      )}
+
+      {/*
         存在しない宛先を指されたときの確認。ヘッダーの外に置くのは、ヘッダーを
-        畳んでいても見えるようにするため。返事を待っている＝窓口の指示が宙に
+        畳んでいても見えるようにするため。返事を待っている＝指示が宙に
         浮いている状態なので、畳んだせいで気づけないと困る。
       */}
       {pending.map((item) => (

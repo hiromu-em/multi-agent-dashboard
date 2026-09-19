@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { confirmSend, rejectSend } from "@/lib/dispatch";
 
 // 宛先を切り替えた直後、`#`無しの最初の1通に対する「このまま送りますか？」に、
-// 盤面から答える口。窓口で `#B` とタグだけ打つのと同じ保留を消化する
+// 盤面から答える口。入力欄で `#B` とタグだけ打つのと同じ保留を消化する
 // （src/lib/dispatch.ts）。存在しない宛先の「作りますか？」（pending/route.ts）とは
 // 別の保留なので、エンドポイントも分けてある。
 

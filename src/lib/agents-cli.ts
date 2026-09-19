@@ -3,7 +3,6 @@ import { promisify } from "node:util";
 import type { LaneStatus } from "@/lib/dashboard-data";
 import { collectDiff } from "@/lib/agent-diff";
 import { dismissSession, registerSessions } from "@/lib/lane-registry";
-import { filterOutGateway } from "@/lib/gateway";
 
 const run = promisify(execFile);
 
@@ -122,8 +121,7 @@ async function fetchAgents(): Promise<AgentLane[]> {
   const deduped = new Map<string, CliAgent>();
   for (const agent of parsed as CliAgent[]) deduped.set(agent.id, agent);
 
-  // 窓口として登録されているセッションはここで弾く。タグも消費させない。
-  const filtered = await filterOutGateway([...deduped.values()]);
+  const filtered = [...deduped.values()];
   const statuses = new Map(filtered.map((agent) => [agent.sessionId, toLaneStatus(agent)]));
 
   // タグは並び順ではなくsessionIdに紐づく。指示の宛先として使うので動いてはいけない。

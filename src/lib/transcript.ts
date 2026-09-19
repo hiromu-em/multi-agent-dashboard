@@ -214,7 +214,7 @@ function formatAskUserQuestion(input: unknown): string {
   return blocks.join("\n\n");
 }
 
-// 窓口の発言には system-reminder が紛れることがある。表示には要らないので落とす。
+// 送った指示には system-reminder が紛れることがある。表示には要らないので落とす。
 const REMINDER_PATTERN = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
 /**
@@ -250,7 +250,7 @@ export async function readTranscript(
     const uuid = typeof row.uuid === "string" ? row.uuid : `row-${entries.length}`;
 
     if (row.type === "user") {
-      // 窓口からの指示は content が文字列で入る。
+      // 送った指示は content が文字列で入る。
       if (typeof message.content === "string") {
         const text = message.content.replace(REMINDER_PATTERN, "").trim();
         if (text) entries.push({ key: uuid, role: "user", time, text });

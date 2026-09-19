@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 現在の宛先を確認する。 `npm run target` でいつでも呼べる。
+// 現在の宛先を確認する。 `npm run t` でいつでも呼べる。
 //
 // かつてのステータスラインは自動表示だったため、既存の表示を丸ごと置き換える割に
 // 得られるのは宛先1行だけで廃止した（AGENTS.md参照）。これは `git branch` と同じ
@@ -47,7 +47,7 @@ async function findLane(sessionId) {
 async function main() {
   const target = await readTarget();
   if (!target) {
-    console.log("→ 宛先なし（窓口のClaudeと会話中）");
+    console.log("→ 宛先なし");
     return;
   }
 

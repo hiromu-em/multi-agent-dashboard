@@ -23,7 +23,7 @@ export interface LaneView {
   diff: string;
   diffLoading: boolean;
   hasNotification: boolean;
-  /** 窓口CLIで `#` を省いた入力が飛ぶ先か。 */
+  /** 入力欄で `#` を省いた入力が飛ぶ先か。 */
   isTarget: boolean;
 }
 
@@ -169,7 +169,7 @@ function InlineMarkdown({ text }: { text: string }) {
   );
 }
 
-// 会話1件の表示。窓口の指示・エージェントの発言・ツール実行・エラーを見分けられるようにする。
+// 会話1件の表示。送った指示・エージェントの発言・ツール実行・エラーを見分けられるようにする。
 function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   if (entry.role === "tool") {
     return (
@@ -195,7 +195,7 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
     <div className={`flex flex-col py-1.5 ${isUser ? "items-end" : "items-start"}`}>
       <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-[#5c6067]">
         <span style={{ color: isUser ? "#f2874a" : isError ? "#f87171" : "#8a8f98" }}>
-          {isUser ? "窓口 →" : isError ? "ERROR" : "エージェント"}
+          {isUser ? "指示 →" : isError ? "ERROR" : "エージェント"}
         </span>
         {entry.time && <span>{entry.time}</span>}
       </div>
@@ -224,9 +224,9 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
 /**
  * 手の空いたレーンへの返信欄。表示時にスライドイン・フェードインする。
  *
- * ダッシュボードに指示入力欄は置かない設計の唯一の例外。宛先は既にこのレーンに
- * 固定されているので `#B` のようなタグ指定は要らない。新しい指示を好きな宛先に
- * 送る用途にはならない（それは引き続き窓口のCLI経由）。
+ * 画面上部のグローバル入力欄とは別の経路。宛先は既にこのレーンに固定されているので
+ * `#B` のようなタグ指定は要らない。新しい指示を好きな宛先に送る用途にはならない
+ * （それはグローバル入力欄の役目）。
  *
  * 当初は「対話待ち（CLIの `blocked`）のときだけ出す」形にしていたが、質問を返して
  * ターンを終えたセッションをCLIは数秒で `done` として返すため、返信欄が出ても
@@ -430,7 +430,7 @@ export default function LaneCard({
             <span
               className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
               style={{ color: "#f2874a", background: "rgba(242,135,74,0.14)" }}
-              title="窓口CLIで # を省いた入力はこのレーンへ送られます"
+              title="入力欄で # を省いた入力はこのレーンへ送られます"
             >
               宛先
             </span>

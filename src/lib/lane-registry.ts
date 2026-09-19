@@ -267,7 +267,7 @@ export async function isTagTaken(tag: string): Promise<boolean> {
  * `registerSessions` は「台帳に記録のあるセッションはそのタグを維持し、記録の無い
  * セッションにだけ `nextFreeTag` で空きを配る」という順序で動く。したがって、
  * 一覧に現れる前にここで記録を作っておけば、そのセッションは狙ったタグで盤面に出る。
- * 窓口が `#K` へ送って作られたセッションが `#C` になってしまわないように使う。
+ * 入力欄から `#K` へ送って作られたセッションが `#C` になってしまわないように使う。
  */
 export async function reserveTag(sessionId: string, tag: string): Promise<void> {
   const store = await load();
