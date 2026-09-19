@@ -71,7 +71,12 @@ export default function DashboardPage() {
   // 指示入力欄（グローバル）。`#タグ 本文` で宛先を指定、省略時は直前の宛先へ。
   const [dispatchText, setDispatchText] = useState("");
   const [dispatchBusy, setDispatchBusy] = useState(false);
+  // 送信結果はポップアップで数秒だけ出す。`toastShown` を別に持つのは、
+  // フェードアウトの間も本文（dispatchStatus）は残しておきたいため
+  // （先に dispatchStatus を消すと、透明度の遷移が終わる前に文字が消える）。
   const [dispatchStatus, setDispatchStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [toastShown, setToastShown] = useState(false);
+  const toastTimers = useRef<{ hide?: ReturnType<typeof setTimeout>; remove?: ReturnType<typeof setTimeout> }>({});
 
   // 直前のステータスを覚えておき、変化したレーンに通知を出す。
   const prevStatus = useRef<Record<string, LaneStatus>>({});
@@ -177,6 +182,28 @@ export default function DashboardPage() {
     }
   }, [pruneVanished]);
 
+  // 送信結果のポップアップを出し、数秒後にフェードアウトさせて消す。
+  // 新しい結果が来たら前のタイマーは打ち切り、アニメーションをやり直す。
+  const showDispatchToast = useCallback((status: { ok: boolean; message: string }) => {
+    if (toastTimers.current.hide) clearTimeout(toastTimers.current.hide);
+    if (toastTimers.current.remove) clearTimeout(toastTimers.current.remove);
+
+    setDispatchStatus(status);
+    setToastShown(false);
+    requestAnimationFrame(() => setToastShown(true)); // 次フレームで表示し、スライドイン・フェードインさせる
+
+    toastTimers.current.hide = setTimeout(() => setToastShown(false), 4000); // 4秒後にフェードアウト開始
+    toastTimers.current.remove = setTimeout(() => setDispatchStatus(null), 4300); // 遷移(300ms)が終わってから消す
+  }, []);
+
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => {
+      if (timers.hide) clearTimeout(timers.hide);
+      if (timers.remove) clearTimeout(timers.remove);
+    };
+  }, []);
+
   // グローバル入力欄からの送信。宛先の解決・スティッキー・確認まわりの判断は
   // すべてサーバー側（src/lib/dispatch.ts の routePrompt）に任せ、ここは結果を出すだけ。
   const submitDispatch = useCallback(async () => {
@@ -191,16 +218,16 @@ export default function DashboardPage() {
         body: JSON.stringify({ prompt: text }),
       });
       const json = await res.json().catch(() => ({}));
-      setDispatchStatus({ ok: json?.ok !== false, message: json?.message ?? "" });
+      showDispatchToast({ ok: json?.ok !== false, message: json?.message ?? "" });
       setDispatchText("");
     } catch (error) {
-      setDispatchStatus({ ok: false, message: error instanceof Error ? error.message : String(error) });
+      showDispatchToast({ ok: false, message: error instanceof Error ? error.message : String(error) });
     } finally {
       setDispatchBusy(false);
       await fetchTarget();
       await fetchAgents();
     }
-  }, [dispatchText, dispatchBusy, fetchTarget, fetchAgents]);
+  }, [dispatchText, dispatchBusy, fetchTarget, fetchAgents, showDispatchToast]);
 
   useEffect(() => {
     const poll = () => {
@@ -488,14 +515,23 @@ export default function DashboardPage() {
           送信
         </button>
       </div>
+      {/*
+        送信結果のポップアップ。レイアウトを押し広げない浮き表示にして、数秒で
+        自動的にフェードアウトする（showDispatchToast）。盤面の確認バー（下の
+        pending/pendingSends）とは違い、こちらは操作を要求しないただの結果表示
+        なので、居座らせず消してよい。
+      */}
       {dispatchStatus && (
         <div
-          className="shrink-0 border-b px-7 py-1.5 font-mono text-[11.5px]"
-          style={
-            dispatchStatus.ok
-              ? { borderColor: "#1d2024", background: "#111317", color: "#8a8f98" }
-              : { borderColor: "#3a1414", background: "#1a0d0d", color: "#f87171" }
-          }
+          className="fixed top-4 right-5 z-50 max-w-sm rounded-lg border px-4 py-2.5 font-mono text-[12px] shadow-lg"
+          style={{
+            transition: "opacity 220ms ease, transform 220ms ease",
+            opacity: toastShown ? 1 : 0,
+            transform: toastShown ? "translateY(0)" : "translateY(-8px)",
+            ...(dispatchStatus.ok
+              ? { borderColor: "#23262b", background: "#111317", color: "#c7cbd1" }
+              : { borderColor: "#3a1414", background: "#1a0d0d", color: "#f87171" }),
+          }}
         >
           {dispatchStatus.message}
         </div>
