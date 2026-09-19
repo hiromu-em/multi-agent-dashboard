@@ -141,7 +141,7 @@ export interface RegisteredLane {
  * 片付けた（`dismissSession`）セッションは戻り値に含めない。呼び出し側は
  * このMapに無いものをレーンから外す。時間では落とさない。
  *
- * `endedAt` も一緒に返す。並び順（完了が新しい順に並べる）に使うため。
+ * `endedAt` も一緒に返す（今の盤面は並び順に使っていない。並びは開始時刻だけで決める）。
  */
 export async function registerSessions(
   sessions: RegisteredSession[],

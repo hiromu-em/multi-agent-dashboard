@@ -136,39 +136,10 @@ async function fetchAgents(): Promise<AgentLane[]> {
     })),
   );
 
-  // 並び順は「完了」→「対話待ち」→「実行中」→「エラー・停止済み」の優先度で決める。
-  // 開始時刻はどこにも使わない（最後のtiebreakとしてのみ残す）。
-  //
-  // 安定ソートを3回チェーンしているので、最後に適用したものが最優先になる：
-  //   1. startedAt昇順 … 完全な同着だけのtiebreak
-  //   2. 終了時刻（endedAt）昇順 … 同じ優先度グループの中では、先に終わった
-  //      （完了／エラー・停止）レーンほど左。新しく終わったレーンはグループの
-  //      右端に追加されるだけで、既存の完了レーンを追い越して割り込むことはない
-  //      （実行中・対話待ちはendedAtが無いので、このキーだけでは③に上書きされる
-  //      まえの間 undefined 側＝左寄りに来る）
-  //   3. 状態グループの優先度（低いほど左）
-  const STATUS_PRIORITY: Record<LaneStatus, number> = {
-    done: 0,
-    waiting: 1,
-    running: 2,
-    error: 3,
-    killed: 3,
-  };
-  const agents = filtered
-    .sort((a, b) => a.startedAt - b.startedAt)
-    .sort((a, b) => {
-      const aEnded = registry.get(a.sessionId)?.endedAt;
-      const bEnded = registry.get(b.sessionId)?.endedAt;
-      if (aEnded === undefined && bEnded === undefined) return 0;
-      if (aEnded === undefined) return -1;
-      if (bEnded === undefined) return 1;
-      return aEnded - bEnded;
-    })
-    .sort((a, b) => {
-      const aPriority = STATUS_PRIORITY[statuses.get(a.sessionId) ?? "done"];
-      const bPriority = STATUS_PRIORITY[statuses.get(b.sessionId) ?? "done"];
-      return aPriority - bPriority;
-    });
+  // 並び順は開始時刻の昇順だけで決める。状態（完了・対話待ち・実行中…）では並べ替えない。
+  // 状態で並べると、見ている最中にレーンが左右へ入れ替わって位置で覚えられなくなる。
+  // 開始順なら新しいレーンは右端に足されるだけで、既存のレーンは動かない。
+  const agents = filtered.sort((a, b) => a.startedAt - b.startedAt);
 
   const lanes = agents
     .filter((agent) => registry.has(agent.sessionId))
