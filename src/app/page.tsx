@@ -218,8 +218,11 @@ export default function DashboardPage() {
         body: JSON.stringify({ prompt: text }),
       });
       const json = await res.json().catch(() => ({}));
-      showDispatchToast({ ok: json?.ok !== false, message: json?.message ?? "" });
-      setDispatchText("");
+      const ok = res.ok && json?.ok !== false;
+      showDispatchToast({ ok, message: json?.message ?? "" });
+      // 失敗したときは入力欄を消さない。宛先が無い・タグを打ち間違えたといった
+      // 失敗はタグを直して送り直すだけなので、本文まで消えると打ち直しになる。
+      if (ok) setDispatchText("");
     } catch (error) {
       showDispatchToast({ ok: false, message: error instanceof Error ? error.message : String(error) });
     } finally {
