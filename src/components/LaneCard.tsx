@@ -30,6 +30,13 @@ export interface LaneView {
 interface LaneCardProps {
   lane: LaneView;
   isFocused: boolean;
+  /**
+   * ライブモードのボードか。
+   *
+   * 会話に集中するためのモードなので、幅は固定せず画面を分け合い、Diff・拡大・
+   * 片付け・停止といった操作は出さない（返信欄だけは残す——会話が目的なので主役）。
+   */
+  live?: boolean;
   onToggleDiff: (id: string) => void;
   onToggleFocus: (id: string) => void;
   onKill: (id: string) => void;
@@ -236,12 +243,15 @@ function ReplyBox({
   id,
   tag,
   laneStatus,
+  live = false,
   question,
   onReply,
 }: {
   id: string;
   tag: string;
   laneStatus: LaneStatus;
+  /** ライブモードでは会話が主役なので、返信欄の文字も一回り大きくする。 */
+  live?: boolean;
   question: string;
   onReply: (id: string, body: string) => Promise<{ ok: boolean; message: string }>;
 }) {
@@ -334,14 +344,14 @@ function ReplyBox({
                 ? "返事を入力（Enterで送信 / Shift+Enterで改行）"
                 : "返信を入力（Enterで送信 / Shift+Enterで改行）"
             }
-            className="min-h-[34px] flex-1 resize-none rounded-md border bg-[#0d0f12] px-2.5 py-1.5 text-[12px] text-[#e6e8eb] outline-none placeholder:text-[#5c6067]"
+            className={`flex-1 resize-none rounded-md border bg-[#0d0f12] px-2.5 py-1.5 text-[#e6e8eb] outline-none placeholder:text-[#5c6067] ${live ? "min-h-[44px] text-[14px]" : "min-h-[34px] text-[12px]"}`}
             style={{ borderColor: urgent ? "#3a3220" : "#2a2d33" }}
           />
           <button
             type="button"
             disabled={sending || !text.trim()}
             onClick={() => send(text)}
-            className="flex h-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border px-3 text-[12px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            className={`shrink-0 cursor-pointer items-center justify-center rounded-md border px-3 font-semibold disabled:cursor-not-allowed disabled:opacity-40 flex ${live ? "h-[44px] text-[13.5px]" : "h-[34px] text-[12px]"}`}
             style={{
               borderColor: urgent ? "#4a3f14" : "#3a3d44",
               background: urgent ? "rgba(251,191,36,0.14)" : "rgba(255,255,255,0.06)",
@@ -361,6 +371,7 @@ function ReplyBox({
 export default function LaneCard({
   lane,
   isFocused,
+  live = false,
   onToggleDiff,
   onToggleFocus,
   onKill,
@@ -404,9 +415,12 @@ export default function LaneCard({
   }
 
   const cardStyle: CSSProperties = {
-    width: isFocused ? 980 : 720,
-    minWidth: isFocused ? 980 : 720,
-    flexShrink: 0,
+    // ライブモードだけは固定幅をやめ、並べた枚数で画面を等分する。
+    // 通常モードは従来どおり固定幅（横スクロールで並べる）。
+    width: live ? "auto" : isFocused ? 980 : 720,
+    minWidth: live ? 0 : isFocused ? 980 : 720,
+    flex: live ? "1 1 0" : undefined,
+    flexShrink: live ? 1 : 0,
     display: "flex",
     flexDirection: "column",
     background: "#15171b",
@@ -452,6 +466,9 @@ export default function LaneCard({
           >
             {meta.label}
           </span>
+          {/* ライブモードでは操作系を出さない。会話に必要なのは返信欄だけ。 */}
+          {!live && (
+          <>
           <button
             type="button"
             title="Git Diff"
@@ -491,7 +508,9 @@ export default function LaneCard({
               </svg>
             )}
           </button>
-          {canDismiss && (
+          </>
+          )}
+          {!live && canDismiss && (
             <button
               type="button"
               title="盤面から片付ける（セッションは残る）"
@@ -504,6 +523,7 @@ export default function LaneCard({
               </svg>
             </button>
           )}
+          {!live && (
           <button
             type="button"
             title="停止 (claude stop)"
@@ -516,12 +536,15 @@ export default function LaneCard({
               <rect x="5" y="5" width="14" height="14" rx="1.5" />
             </svg>
           </button>
+          )}
         </div>
       </div>
 
-      <div className="shrink-0 truncate border-b border-[#1f2226] bg-[#101215] px-3.5 py-1.5 font-mono text-[10.5px] text-[#5c6067]">
-        {lane.cwd}
-      </div>
+      {!live && (
+        <div className="shrink-0 truncate border-b border-[#1f2226] bg-[#101215] px-3.5 py-1.5 font-mono text-[10.5px] text-[#5c6067]">
+          {lane.cwd}
+        </div>
+      )}
 
       {lane.diffOpen && (
         <div
@@ -547,7 +570,7 @@ export default function LaneCard({
           ref={logRef}
           onScroll={handleLogScroll}
           className="dc-scroll flex-1 p-3.5 font-mono"
-          style={{ minHeight: 0, overflowY: "auto", fontSize: isFocused ? 14.5 : 14 }}
+          style={{ minHeight: 0, overflowY: "auto", fontSize: live ? 15.5 : isFocused ? 14.5 : 14 }}
         >
           {lane.entries.length > 0 ? (
             lane.entries.map((entry) => <TranscriptRow key={entry.key} entry={entry} />)
@@ -579,6 +602,7 @@ export default function LaneCard({
           id={lane.id}
           tag={lane.tag}
           laneStatus={lane.status}
+          live={live}
           question={[...lane.entries].reverse().find((e) => e.role === "agent")?.text ?? ""}
           onReply={onReply}
         />

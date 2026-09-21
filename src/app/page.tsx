@@ -73,6 +73,11 @@ export default function DashboardPage() {
   const [dispatchBusy, setDispatchBusy] = useState(false);
   // 入力欄を広げているか。長い指示のときだけボタンで広げる（既定は2行）。
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
+  // ライブモード。会話に集中するため、余分なUIを外して大きなボードで並べる。
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveCount, setLiveCount] = useState(3);
+  // ライブモードで左端に出すレーンの位置。タブや◀▶でずらす。
+  const [liveStart, setLiveStart] = useState(0);
   // 送信結果はポップアップで数秒だけ出す。`toastShown` を別に持つのは、
   // フェードアウトの間も本文（dispatchStatus）は残しておきたいため
   // （先に dispatchStatus を消すと、透明度の遷移が終わる前に文字が消える）。
@@ -198,6 +203,16 @@ export default function DashboardPage() {
     toastTimers.current.remove = setTimeout(() => setDispatchStatus(null), 4300); // 遷移(300ms)が終わってから消す
   }, []);
 
+  // ライブモードはEscで抜ける。入力中でも効くようにwindowで受ける。
+  useEffect(() => {
+    if (!liveMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLiveMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [liveMode]);
+
   useEffect(() => {
     const timers = toastTimers.current;
     return () => {
@@ -246,8 +261,15 @@ export default function DashboardPage() {
 
   const visibleAgents = useMemo(() => agents.slice(0, laneCount), [agents, laneCount]);
   const focusedAgent = focusedId ? (agents.find((a) => a.id === focusedId) ?? null) : null;
-  const isFocusMode = !!focusedAgent;
-  const displayAgents = isFocusMode ? [focusedAgent!] : visibleAgents;
+  const isFocusMode = !liveMode && !!focusedAgent;
+  // ライブモードは liveStart から liveCount 枚を切り出す。レーンが減ったときに
+  // 空振りしないよう、始点は毎回いまのレーン数で丸めておく。
+  const liveStartSafe = Math.max(0, Math.min(liveStart, Math.max(0, agents.length - liveCount)));
+  const liveAgents = useMemo(
+    () => agents.slice(liveStartSafe, liveStartSafe + liveCount),
+    [agents, liveStartSafe, liveCount],
+  );
+  const displayAgents = liveMode ? liveAgents : isFocusMode ? [focusedAgent!] : visibleAgents;
 
   // 表示中のレーンの会話だけを取りに行く。
   // 会話ファイルの特定に sessionId が要るので、id と一緒に持ち回る。
@@ -405,7 +427,86 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#0a0b0d] text-[#e6e8eb]">
-      {headerHidden ? (
+      {/*
+        ライブモード：会話に集中するためのモード。ヘッダー・指示入力欄・操作ボタンを
+        すべて外し、ボードを画面いっぱいに等分して並べる（1〜3枚）。残すのは会話と
+        返信欄、それとどのレーンを出すかを選ぶ細い帯だけ。Escで戻る。
+      */}
+      {liveMode && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-[#1d2024] bg-[#111317] px-4 py-1.5">
+          <button
+            type="button"
+            onClick={() => setLiveMode(false)}
+            title="通常モードに戻る（Esc）"
+            className="cursor-pointer rounded-md border border-[#23262b] px-2.5 py-1 text-[11px] text-[#aeb2b8]"
+          >
+            ← 戻る
+          </button>
+          <button
+            type="button"
+            onClick={() => setLiveStart((prev) => Math.max(0, prev - 1))}
+            disabled={liveStartSafe === 0}
+            title="左のレーンへ"
+            className="cursor-pointer rounded-md border border-[#23262b] px-2 py-1 text-[11px] text-[#aeb2b8] disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            ◀
+          </button>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+            {agents.map((a, index) => {
+              const shown = index >= liveStartSafe && index < liveStartSafe + liveCount;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => setLiveStart(index)}
+                  className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold"
+                  style={{
+                    borderColor: shown ? "#f2874a" : "#23262b",
+                    background: shown ? "rgba(242,135,74,0.12)" : "transparent",
+                    color: shown ? "#f2874a" : "#8a8f98",
+                  }}
+                >
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full"
+                    style={{ background: STATUS_META[a.status].dot }}
+                  />
+                  {a.tag}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => setLiveStart((prev) => prev + 1)}
+            disabled={liveStartSafe + liveCount >= agents.length}
+            title="右のレーンへ"
+            className="cursor-pointer rounded-md border border-[#23262b] px-2 py-1 text-[11px] text-[#aeb2b8] disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            ▶
+          </button>
+          <span className="ml-1 shrink-0 text-[11px] text-[#6f7580]">並べる数</span>
+          {[1, 2, 3].map((n) => {
+            const active = n === liveCount;
+            return (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setLiveCount(n)}
+                className="cursor-pointer rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold"
+                style={{
+                  borderColor: active ? "#f2874a" : "#23262b",
+                  background: active ? "rgba(242,135,74,0.14)" : "transparent",
+                  color: active ? "#f2874a" : "#8a8f98",
+                }}
+              >
+                {n}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {!liveMode && (headerHidden ? (
         <div className="flex shrink-0 items-center justify-center border-b border-[#1d2024] bg-[#111317] py-1">
           <button
             type="button"
@@ -456,6 +557,15 @@ export default function DashboardPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLiveMode(true)}
+            title="ライブモード：余分な表示を外して大きなボードで会話する"
+            className="mr-1 cursor-pointer rounded-md border px-3 py-1.5 text-xs font-semibold"
+            style={{ borderColor: "#5a3018", background: "rgba(242,135,74,0.12)", color: "#f2874a" }}
+          >
+            ライブ
+          </button>
           <span className="mr-0.5 text-[11px] text-[#6f7580]">レーン数</span>
           {LANE_COUNT_OPTIONS.map((n) => {
             const active = n === laneCount;
@@ -487,7 +597,7 @@ export default function DashboardPage() {
           </button>
         </div>
       </header>
-      )}
+      ))}
 
       {/*
         指示の入力欄。ヘッダーの外に置くのは、ヘッダーを畳んでいても使えるように
@@ -495,6 +605,7 @@ export default function DashboardPage() {
         使えなくなると困る）。宛先の解決・スティッキー・確認はすべてサーバー側
         （src/lib/dispatch.ts の routePrompt）に任せ、ここでは結果を表示するだけ。
       */}
+      {!liveMode && (
       <div className="flex shrink-0 items-start gap-3 border-b border-[#1d2024] bg-[#111317] px-7 py-3">
         <textarea
           value={dispatchText}
@@ -538,6 +649,7 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+      )}
       {/*
         送信結果のポップアップ。レイアウトを押し広げない浮き表示にして、数秒で
         自動的にフェードアウトする（showDispatchToast）。盤面の確認バー（下の
@@ -677,10 +789,11 @@ export default function DashboardPage() {
       )}
 
       <div
-        className="dc-scroll flex flex-1 flex-row items-stretch gap-4 px-7 pt-4.5 pb-6"
+        className={`dc-scroll flex flex-1 flex-row items-stretch ${liveMode ? "gap-3 px-3 pt-3 pb-3" : "gap-4 px-7 pt-4.5 pb-6"}`}
         style={{
           minHeight: 0,
-          overflowX: "auto",
+          // ライブモードは画面を等分するので横スクロールを出さない。
+          overflowX: liveMode ? "hidden" : "auto",
           overflowY: "hidden",
           justifyContent: isFocusMode ? "center" : "flex-start",
         }}
@@ -691,6 +804,7 @@ export default function DashboardPage() {
               key={lane.id}
               lane={lane}
               isFocused={isFocusMode}
+              live={liveMode}
               onToggleDiff={toggleDiff}
               onToggleFocus={toggleFocus}
               onKill={killLane}
