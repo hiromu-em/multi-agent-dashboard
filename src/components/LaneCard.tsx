@@ -301,9 +301,11 @@ function ReplyBox({
 
         {options.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {options.map((opt) => (
+            {options.map((opt, index) => (
               <button
-                key={opt.label}
+                // ラベルは `extractOptions` が一意になるものだけを通すが、キーには
+                // 位置も混ぜておく。万一重複が漏れても画面が壊れないようにするため。
+                key={`${index}-${opt.label}`}
                 type="button"
                 disabled={sending}
                 onClick={() => send(opt.text)}

@@ -70,12 +70,28 @@ function extractTableOptions(text: string): ReplyOption[] {
   return options;
 }
 
+/**
+ * ラベルが重複していないか。
+ *
+ * `AskUserQuestion` を組み立てた文章（`formatAskUserQuestion`）は、質問が複数あっても
+ * 選択肢に通し番号を振るのでラベルは必ず一意になる。逆に言うと**ラベルが重複している
+ * 時点で、それは1つの選択肢の集まりではなく、無関係な番号付きリストが複数混ざっている**
+ * ——「1. …2. …3.」の説明のあとに「1. …2. …」の質問が続くような地の文がこれにあたる。
+ * 選択肢として扱わない。
+ *
+ * 実際、重複したまま出すと盤面が壊れる。ボタンのReactキーにラベルを使っているので、
+ * 「1」が2つあると "Encountered two children with the same key" になる。
+ */
+function labelsAreUnique(options: ReplyOption[]): boolean {
+  return new Set(options.map((option) => option.label)).size === options.length;
+}
+
 export function extractOptions(text: string): ReplyOption[] {
   const lineOptions = extractLineOptions(text);
-  if (lineOptions.length >= MIN_OPTIONS) return lineOptions;
+  if (lineOptions.length >= MIN_OPTIONS && labelsAreUnique(lineOptions)) return lineOptions;
 
   const tableOptions = extractTableOptions(text);
-  if (tableOptions.length >= MIN_OPTIONS) return tableOptions;
+  if (tableOptions.length >= MIN_OPTIONS && labelsAreUnique(tableOptions)) return tableOptions;
 
   return [];
 }
