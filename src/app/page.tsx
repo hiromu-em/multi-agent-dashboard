@@ -71,6 +71,8 @@ export default function DashboardPage() {
   // 指示入力欄（グローバル）。`#タグ 本文` で宛先を指定、省略時は直前の宛先へ。
   const [dispatchText, setDispatchText] = useState("");
   const [dispatchBusy, setDispatchBusy] = useState(false);
+  // 入力欄を広げているか。長い指示のときだけボタンで広げる（既定は2行）。
+  const [dispatchExpanded, setDispatchExpanded] = useState(false);
   // 送信結果はポップアップで数秒だけ出す。`toastShown` を別に持つのは、
   // フェードアウトの間も本文（dispatchStatus）は残しておきたいため
   // （先に dispatchStatus を消すと、透明度の遷移が終わる前に文字が消える）。
@@ -504,19 +506,37 @@ export default function DashboardPage() {
             }
           }}
           placeholder="#B 本文 のように宛先を指定（省略時は直前の宛先へ）。# 単独で宛先解除。Shift+Enterで改行、複数行で複数宛先に同時送信"
-          rows={2}
+          rows={dispatchExpanded ? 10 : 2}
           disabled={dispatchBusy}
-          className="min-w-0 flex-1 resize-none rounded-md border border-[#23262b] bg-[#0a0b0d] px-3 py-2 font-mono text-[12.5px] text-[#e6e8eb] placeholder:text-[#5c6067] focus:border-[#f2874a] focus:outline-none disabled:opacity-50"
+          className="min-w-0 flex-1 resize-none rounded-md border border-[#23262b] bg-[#0a0b0d] px-3 py-2 font-mono text-[15px] text-[#e6e8eb] placeholder:text-[#5c6067] focus:border-[#f2874a] focus:outline-none disabled:opacity-50"
         />
-        <button
-          type="button"
-          onClick={submitDispatch}
-          disabled={dispatchBusy || !dispatchText.trim()}
-          className="shrink-0 cursor-pointer rounded-md border px-4 py-2 text-[12.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-          style={{ borderColor: "#5a3018", background: "rgba(242,135,74,0.14)", color: "#f2874a" }}
-        >
-          送信
-        </button>
+        <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+          <button
+            type="button"
+            onClick={submitDispatch}
+            disabled={dispatchBusy || !dispatchText.trim()}
+            className="cursor-pointer rounded-md border px-4 py-2 text-[12.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ borderColor: "#5a3018", background: "rgba(242,135,74,0.14)", color: "#f2874a" }}
+          >
+            送信
+          </button>
+          {/*
+            入力欄の高さをボタンで切り替える。長い指示を書くときだけ広げられれば
+            よく、常に大きいとレーンの表示領域を食う。ドラッグでのリサイズは
+            掴みどころが小さく、盤面の他の操作（ヘッダーの開閉など）がすべて
+            ボタンなので、ここも同じボタン式で揃えている。
+          */}
+          <button
+            type="button"
+            onClick={() => setDispatchExpanded((prev) => !prev)}
+            title={dispatchExpanded ? "入力欄を狭める" : "入力欄を広げる"}
+            className="flex cursor-pointer items-center justify-center rounded-md border border-[#23262b] py-1.5 text-[#6f7580] hover:text-[#aeb2b8]"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              {dispatchExpanded ? <polyline points="6 15 12 9 18 15" /> : <polyline points="6 9 12 15 18 9" />}
+            </svg>
+          </button>
+        </div>
       </div>
       {/*
         送信結果のポップアップ。レイアウトを押し広げない浮き表示にして、数秒で
